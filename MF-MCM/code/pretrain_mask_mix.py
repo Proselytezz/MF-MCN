@@ -45,6 +45,8 @@ parser.add_argument('--batch_size', type=int, default=1,
                     help='batch_size per gpu')
 parser.add_argument('--sw_batch', type=int, default=1,
                     help='batch_size per sample')
+parser.add_argument('--num_workers', type=int, default=0,
+                    help='dataloader worker processes; set 8 on a multi-core GPU server')
 parser.add_argument('--deterministic', type=int,  default=1,
                     help='whether use deterministic training')
 parser.add_argument('--base_lr', type=float,  default=3e-4,
@@ -193,10 +195,11 @@ def train(args, snapshot_path):
         random.seed(args.seed + worker_id)
 
     trainloader = DataLoader(db_train, batch_size=batch_size, shuffle=True,
-                             num_workers=0, pin_memory=True, worker_init_fn=worker_init_fn)
+                             num_workers=args.num_workers, pin_memory=True, worker_init_fn=worker_init_fn)
     
     if args.resume_path is not None:
-        iter_num = int(args.resume_path.split('_')[11])+1
+        # checkpoint 文件名形如 iter_45000_loss_1.535.pth，从文件名解析已完成的迭代数
+        iter_num = int(os.path.basename(args.resume_path).split('_')[1]) + 1
         load_dict = torch.load(args.resume_path)
         start_epoch = load_dict['epoch']
         model.load_state_dict(load_dict['model'])
@@ -393,7 +396,9 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
 
-    snapshot_path = os.path.join(r'E:\MF-MCM-main\outputs', 'pretrain', args.exp, args.model)
+    # 输出目录相对于项目根目录，兼容 Windows 与 Linux
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    snapshot_path = os.path.join(project_root, 'outputs', 'pretrain', args.exp, args.model)
     if not os.path.exists(snapshot_path):
         os.makedirs(snapshot_path)
     
