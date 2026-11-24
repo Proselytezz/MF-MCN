@@ -1,4 +1,5 @@
 # 数据（BraTS 原始/预处理 h5，约 140GB）
+# 默认忽略，按批次用 `git add -f <目录>` 显式加入（已由 .gitattributes 走 LFS）
 data/
 
 # 模型权重与检查点
