@@ -1,0 +1,1354 @@
+Contents lists available at ScienceDirect
+Information Fusion
+journal homepage: www.elsevier.com/locate/inffus
+Modality fusion and masked complementary modeling based pre-training 
+for brain tumor segmentation
+Jianwen Liang a,1, Li Lin a,b,c,1, Junyan Lyu a,d, Pujin Cheng a,b,c, Xiaoying Tang
+ a,b,∗
+a Department of Electronic and Electrical Engineering, Southern University of Science and Technology, Shenzhen, China
+b Jiaxing Research Institute, Southern University of Science and Technology, Jiaxing, China
+c Department of Electrical and Electronic Engineering, The University of Hong Kong, Hong Kong, China
+d Queensland Brain Institute, The University of Queensland, Brisbane, Australia
+a r t i c l e  i n f o
+Keywords:
+Self-supervised
+Multimodal brain MRI
+Modality fusion
+Complementary masking
+Brain tumor segmentation
+ a b s t r a c t
+Self-supervised learning (SSL), which leverages large amounts of unlabeled data to reduce dependence on exten-
+sive annotations, has demonstrated remarkable transferability in medical image segmentation tasks. However, 
+most existing SSL approaches for medical imaging are limited to single-modality data, overlooking the intrinsic 
+complementarity among diﬀerent imaging modalities. In brain tumor analysis, multimodal magnetic resonance 
+imaging (MRI) plays a crucial role in accurately delineating tumor subregions, as each modality provides dis-
+tinct yet complementary information about tumor morphology and physiology. Therefore, eﬀectively exploiting 
+multimodal information during SSL has emerged as an important research focus for advancing brain tumor 
+segmentation. In this study, we introduce a novel SSL framework, Modality Fusion and Masked Complemen-
+tary Modeling (MF-MCM), developed for multimodal brain MRI. MF-MCM ﬁrst performs modality-wise fusion 
+through weighted sum of the input modalities to generate fused images equal in number to the input modalities. 
+Subsequently, it applies complementary masking to the multichannel image constructed by concatenating the 
+fused images, ensuring that the unmasked regions across all channels are non-overlapping and they jointly occupy 
+the whole brain. Finally, by optimizing the multimodal image reconstruction and fusion coeﬃcients regression 
+tasks, the pre-training model is endowed with the ability to perceive ﬁne-grained neuroanatomical details, inte-
+grate multimodal information, and achieve eﬀective cross-modality interaction. The proposed SSL framework is 
+ﬁne-tuned and evaluated on four brain tumor segmentation datasets and one stroke lesion segmentation dataset. 
+Results demonstrate that MF-MCM outperforms various state-of-the-art medical SSL methods while eﬀectively 
+reducing annotation requirements and maintaining robustness in scenarios where certain modalities are absent. 
+Codes and pre-trained models will be available at https://github.com/liangjianwen01/MF-MCM.
+1.  Introduction
+Brain tumors, particularly gliomas that originate from glial cells, rep-
+resent one of the most aggressive and fatal categories of human ma-
+lignancies. Accurate segmentation of brain tumors is crucial for diag-
+nosis and prognosis [1]. Magnetic resonance imaging (MRI) is a pre-
+ferred diagnostic tool in neurology due to its superior soft tissue con-
+trast, non-invasive nature, and avoidance of ionizing radiation. In clin-
+ical practice, multimodal MRI plays a vital role in providing compre-
+hensive characterizations of tissue alterations within brain tumor re-
+gions. The key MRI modalities used in brain tumor analyses include T1-
+weighted (T1w), T2-weighted (T2w), contrast-enhanced T1-weighted 
+∗ Corresponding author.
+ E-mail addresses: 12431240@mail.sustech.edu.cn (J. Liang), linli@eee.hku.hk (L. Lin), junyan.lyu@uq.edu.au (J. Lyu), chengpj@connect.hku.hk (P. Cheng), 
+tangxy@sustech.edu.cn (X. Tang).
+1 Jianwen Liang and Li Lin contributed equally to this work.
+(T1ce), and Fluid-Attenuated Inversion Recovery (FLAIR) [2], each of-
+fering unique insights into tumor characteristics. Combining the comple-
+mentary information from multiple diﬀerent MRI modalities may signif-
+icantly enhance model performance in multimodal brain image analysis 
+by exploiting the complementary tissue-speciﬁc information from each 
+modality.
+Recent deep neural network-based medical image segmentation al-
+gorithms have achieved remarkable success in segmenting brain struc-
+tures, tumors, and lesions, reducing human error and ensuring consis-
+tency. However, these algorithms heavily rely on large amounts of an-
+notated data to provide supervision signals. In medical image segmen-
+tation, obtaining pixel-wise or voxel-wise annotations of regions of in-
+https://doi.org/10.1016/j.inﬀus.2026.104345
+Received 14 November 2025; Received in revised form 4 March 2026; Accepted 30 March 2026
+Information Fusion 133 (2026) 104345 
+Available online 1 April 2026 
+1566-2535/© 2026 Elsevier B.V. All rights are reserved, including those for text and data mining, AI training, and similar technologies. 
+J. Liang et al.
+terest (ROIs) requires specialized medical expertise and is both time-
+consuming and costly. Furthermore, the subjectivity of the annotations 
+and the presence of noisy labels [3] often limit the performance of su-
+pervised approaches.
+Self-supervised learning (SSL) has emerged as an eﬀective paradigm 
+for exploiting large-scale unannotated data that are readily available 
+but frequently underutilized in practice. By designing and optimizing 
+pre-text tasks, SSL aims to learn meaningful and generalizable represen-
+tations without the need for extensive manual labeling [4]. Depending 
+on the pre-text task, SSL can be broadly categorized into discriminative 
+and generative approaches.
+Discriminative methods mainly include predictive [5] and con-
+trastive learning (CL) approaches [6]. Predictive methods train mod-
+els by predicting image transformations, such as image rotation angles, 
+image patch indices, and so on. CL methods construct similar and dis-
+similar instances, pulling similar samples close and pushing dissimilar 
+ones away in the feature space. Although discriminative methods have 
+achieved remarkable success in the natural image domain due to their 
+ability to recognize global discriminative features, they face challenges 
+when applied to medical images, especially brain MRI. In medical imag-
+ing, the diﬀerence between diseased and healthy samples is often subtle, 
+primarily manifesting in local variations, and discriminative methods 
+may overlook these ﬁne-grained characteristics [7]. CL further exacer-
+bates this issue, as most CL methods discriminate between positive and 
+negative samples at the individual level. However, many anatomical 
+structures exhibit highly similar phenotypes across subjects, and treat-
+ing samples from diﬀerent individuals as negative pairs fails to account 
+for such cross-subject anatomical similarity.
+On the other hand, generative methods aim to model the data dis-
+tribution, particularly those based on image restoration, which are ef-
+fective in capturing and preserving image details and have been widely 
+applied in computationally intensive medical image segmentation tasks. 
+Speciﬁcally, context restoration methods ﬁrst apply various types of dis-
+tortions to an image of interest, such as rotation [8], deformation [9], or 
+masking [10–12], and then reconstruct the original image at the pixel 
+or voxel level. Context restoration methods may overly focus on im-
+age details, making them sensitive to image noise [13]. Multitask SSL 
+methods, which combine discriminative and generative tasks, can simul-
+taneously capture the overall structure of an image while retaining its 
+ﬁne-grained features. Such types of approaches have been extensively 
+explored in medical image segmentation, achieving remarkable results.
+Current SSL methods for medical imaging predominantly concen-
+trate on single-modal imaging. When handling multimodal MRI, existing 
+techniques typically process them as multichannel volumes while failing 
+to capture critical cross-modal interactions. The eﬀective integration of 
+information from each modality is crucial for downstream tasks such as 
+brain tumor segmentation [14], as each modality oﬀers unique insights 
+into the characteristics of brain tumors. Common strategies for model-
+ing cross-modal relationships include joint representations [15] project-
+ing individual modalities into separate embedding spaces, disentangled 
+representations [16] decomposing modalities into anatomy-preserving 
+and appearance-speciﬁc components, and multimodal fusion [17] with 
+learnable feature integration mechanisms. As a result, these methods 
+fail to capture the underlying anatomical consistency between modali-
+ties. While some studies such as M3AE [18] and BrainMVP [19], have 
+explored SSL for multimodal brain MRI, they primarily rely on learnable 
+ﬁxed templates to align heterogeneous inputs into a shared coordinate 
+space. However, such "static alignment" strategies may struggle with the 
+substantial anatomical and imaging heterogeneity of brain tumors, as a 
+ﬁxed template cannot easily adapt to patient-speciﬁc tumor morpholo-
+gies or varied contrast distributions across individuals.
+In this paper, we propose a multitask SSL paradigm named Modality 
+Fusion and Masked Complementary Modeling (MF-MCM), which shifts 
+the focus from static alignment to dynamic cross-modal reasoning. Un-
+like previous methods that rely on ﬁxed templates, MF-MCM employs 
+innovative Modality Fusion (MF) and Masked Complementary Modeling 
+(MCM) strategies to explicitly model inter-modal synergies. During pre-
+training, MF-MCM applies modality fusion and complementary mask-
+ing for the input data, and then reconstructs the original multimodal 
+images and regresses out the fusion coeﬃcients. Restoring multimodal 
+brain MRI enables the model to learn not only the intensity distribution 
+of each modality, but also the cross-modal interactions. Predicting the 
+fusion coeﬃcients enables the model to capture the overall style of each 
+modality by identifying the contribution of each modality from a fused 
+image. In this way, MF-MCM remains robust to data scarcity and miss-
+ing modality in downstream tasks. In summary, our main contributions 
+are ﬁve-fold:
+• We introduce MF-MCM, a novel SSL paradigm that explicitly models 
+cross-modal interactions in 3D multimodal brain MRI without rely-
+ing on rigid, modality-speciﬁc templates.
+• We introduce Masked Complementary Modeling (MCM), a novel 
+strategy that establishes cross-modal bridges by forcing the network 
+to recover masked regions using information from complementary 
+modalities.
+• We introduce the Modality Fusion (MF) strategy, coupled with a co-
+eﬃcient regression task, to enhance data diversity and improve the 
+model’s ability to decouple shared and modality-speciﬁc features.
+• We quantitatively and qualitatively validate our method’s perfor-
+mance on downstream segmentation tasks across ﬁve brain MRI 
+datasets, including GLI [20], SSA [21], PED [22], MET [23], and 
+ATLAS2 [24], demonstrating that MF-MCM outperforms SOTA med-
+ical SSL algorithms on both Dice and distance-based metrics (HD95 
+and ASSD).
+• MF-MCM demonstrates strong data eﬃciency and robustness to miss-
+ing modalities, achieving superior segmentation performance even 
+with limited annotated data or incomplete MRI modalities.
+This paper extends our previous work [25] in three aspects:
+• Building upon the foundation of Masked Modality Completion Mod-
+eling (MMCM), we introduce modality fusion. This strategy enables 
+the model to learn interactions across modalities while eﬀectively 
+capturing the distinctive features of each modality.
+• We extend our SSL method from single-task learning to multitask 
+learning by simultaneously incorporating a regression task for each 
+modality’s fusion coeﬃcient.
+• We validate the performance of MF-MCM in a broader range of brain 
+segmentation scenarios, including glioma tumors from various popu-
+lations and brain lesions. We also conduct more comprehensive anal-
+ysis experiments.
+2.  Related work
+2.1.  Self-supervised learning for natural images
+SSL leverages the input data itself for supervisory signals and extracts 
+rich semantic features inherent in the data, achieving overwhelming suc-
+cess in computer vision. For natural images, mainstream SSL paradigms 
+include discriminative and generative approaches.
+Discriminative SSL is mainly implemented in two forms. One is to 
+predict transformations applied to the input data [5]. The other is to in-
+dicate whether a sample is positive or negative relative to a data anchor, 
+for example, studies [6] construct anchors and positive samples through 
+data augmentation, treating other samples in the same batch as the neg-
+ative samples for training image encoders. To prevent model collapse, 
+methods like BYOL [26] and SimSiam [27] rely solely on anchor and 
+positive sample pairs.
+SSL methods based on context restoration refer to a class of genera-
+tive methods that focus on training encoder-decoder networks to recon-
+struct distorted images at the pixel or voxel level. For example SimMIM 
+[12] performs pixel-level reconstructions with high masking ratios. BEiT 
+[28], inspired by masked language modeling techniques such as BERT 
+Information Fusion 133 (2026) 104345 
+2 
+J. Liang et al.
+[29], employs a discrete variational autoencoder [30] to generate visual 
+tokens and perform reconstructions from distorted images. SparK [31] 
+introduces a BERT-style method based on convolutional neural networks 
+(CNNs). Recent studies indicate that combining Mix-Up [32] with con-
+text restoration methods can yield impressive performance. For exam-
+ple, MixMAE [33] extends the MAE framework by substituting masked 
+patches with image patches from another image, subsequently recon-
+structing both images. MixedAE [34] reconstructs the mixed images like 
+MixMAE does while also introducing an auxiliary source identiﬁcation 
+task. These methods, focusing on pixel- or voxel-level information, eﬀec-
+tively capture ﬁne-grained visual details and demonstrate exceptional 
+transfer performance in downstream image segmentation tasks.
+2.2.  Self-supervised learning for medical images
+In the recent few years, SSL has achieved substantial success in med-
+ical image analysis. Models Genesis [35] trains a network to restore im-
+ages corrupted through in-painting, out-painting, nonlinear transforma-
+tions, and local shuﬄing. Tao et al. [36] pre-train a network by solving 
+the Rubik’s cube game.
+Some works try to incorporate medical priors during the pre-training 
+phase to ensure that the learned visual representations closely align with 
+anatomical structures. ASA [37] incorporates the symmetry of healthy 
+brain structures to pre-train a network. TransVW [38] constructs visual 
+words based on the anatomical consistency across individuals and im-
+proves Models Genesis through self-discovery and self-classiﬁcation pre-
+text tasks. SSiT [4] proposes a saliency-guided SSL method to capture 
+salient features for diabetic retinopathy grading.
+More recently, several studies have incorporated discriminative tasks 
+into image restoration to enhance the models’ ability to capture global 
+features. For example, SwinMM [39], inspired by multi-view learning, 
+enforces consistency of both reconstruction results and high-level se-
+mantic features of images from diﬀerent perspectives. PCRLv2 [40] fo-
+cuses on preserving visual information through multi-scale pixel restora-
+tion and feature comparison. Tang et al. [8] pre-train Swin UNETR [41] 
+using a multitask learning approach that combines image restoration, 
+image rotation prediction, and contrastive learning tasks. Inspired by 
+these studies, we also integrate discriminative tasks to further enhance 
+our model’s ability to capture both local and global features. Integrat-
+ing Mix-Up into the pre-training of volumetric medical images has also 
+shown considerable eﬀectiveness. Wang et al. [42] introduce a strat-
+egy called Volume Fusion (VF), which fuses patches from diﬀerent in-
+stances and pre-trains a network by predicting the fusion coeﬃcients of 
+each voxel. While existing Mix-Up or whole-volume fusion approaches 
+primarily focus on sample-level mixing across diﬀerent subjects to en-
+hance robustness against inter-patient variability, our approach fun-
+damentally diﬀers by applying fusion across diﬀerent MRI modalities 
+within the same subject. Furthermore, rather than serving merely as a 
+data augmentation technique, our Modality Fusion acts as a specialized 
+representation-learning pre-text task. By explicitly regressing the fusion 
+coeﬃcients, the network is forced to quantify the exact contribution of 
+each modality within the fused input.
+2.3.  Self-supervised learning for multimodal images
+Multimodal medical imaging oﬀers a great opportunity to compre-
+hensively analyze anatomical structures of interest by highlighting their 
+diﬀerent tissue components, but conventional SSL methods developed 
+for single-modality data may not adequately capture and eﬀectively 
+leverage cross-modal information. To overcome this limitation, SSL 
+methods specialized for multimodal imaging have recently been devel-
+oped. MultiMAE [43] samples visible patches from multiple modalities 
+based on a Dirichlet distribution while masking the rest and then recon-
+structs the masked context. Table et al. [44] present a novel SSL method 
+for multimodal medical images by solving multimodal jigsaw puzzles. 
+M3AE [18] employs a masked autoencoder to reconstruct multimodal 
+brain MRI and leverages cross-modal learning to improve representation 
+alignment. BrainMVP [19] employs a modality-wise distillation strat-
+egy to align and unify representations across multiple MRI modalities. 
+However, both M3AE and BrainMVP rely on ﬁxed and shared modality 
+templates, which may not fully capture the complex and patient-speciﬁc 
+characteristics of brain tumors.
+3.  Methods
+The goal of our MF-MCM framework is to learn transferable and gen-
+eralizable representations from multimodal brain MRI. The pipeline is 
+depicted in Fig. 1 and consists of the following key steps: (1) performing 
+modality fusion, ensuring that speciﬁc modalities dominate designated 
+channels, (2) applying complementary masking to the multichannel MRI 
+after modality fusion, and (3) training a model to restore the original 
+multimodal MRI while regressing out the fusion coeﬃcients. Each step 
+will be explicitly explained in subsequent subsections.
+3.1.  MF-MCM paradigm
+3.1.1.  Modality fusion
+During pre-training, enhanced data diversity facilitates the learning 
+of generalizable and robust image representations. However, brain re-
+gions of a similar tissue type, such as the hippocampus and the amygdala 
+that both belong to subcortical gray matter, often exhibit similar inten-
+sity patterns within the same MRI modality, limiting the eﬀectiveness 
+of intensity-based perturbations in context restoration tasks. We imple-
+ment cross-modality, patch-wise Mix-Up rather than global volume-level 
+fusion. This choice is motivated by the need to maximize spatial data 
+diversity: by applying distinct fusion coeﬃcients to localized image re-
+gions, we prevent the network from relying on global intensity statistics 
+and force it to learn robust, ﬁne-grained cross-modal correspondences.
+Given a multimodal MRI sample 𝑋 ∈ 𝑅4×𝐷×𝐻×𝑊 , consisting of four 
+commonly used MRI modalities 𝑚𝑜𝑑 ∈ {𝑇 1𝑤, 𝑇 2𝑤, 𝑇 1𝑐𝑒, 𝐹 𝐿𝐴𝐼𝑅}, each 
+image patch 𝑃𝑓 ∈ 𝑅𝑑×ℎ×𝑤 in a fused image 𝐼𝑓 ∈ 𝑅𝐷×𝐻×𝑊  is generated 
+via a weighted summation of the corresponding patches {𝑃𝑚𝑜𝑑 } from the 
+four input modalities: 𝐼𝑇 1, 𝐼𝑇 1𝑐𝑒 , 𝐼𝑇 2, 𝐼𝐹 𝐿𝐴𝐼𝑅 ∈ 𝑅𝐷×𝐻×𝑊 . The modal-
+ity fusion process is governed by a set of modality-speciﬁc coeﬃcients: 
+𝐶 = [𝐶𝑇 1, 𝐶𝑇 1𝑐𝑒, 𝐶𝑇 2, 𝐶𝐹 𝐿𝐴𝐼𝑅]𝑇 , where each weight is sampled from a 
+discrete set deﬁned in the closed interval from zero to one and with a 
+step size of 0.05, namely [0 ∶ 0 .05 ∶ 1] . The sampling interval 𝛿 = 0.05 is 
+selected to provide a suﬃciently granular distribution of blended in-
+tensities while maintaining computational feasibility during the pre-
+training phase. To ensure the intensity diversity of the fused data, dis-
+tinct fusion coeﬃcients are applied across diﬀerent patches within the 
+same fused image. The modality fusion process can be formulated as
+𝑃𝑓 =
+∑
+𝑚𝑜𝑑∈𝑚𝑜𝑑𝑠
+𝐶𝑚𝑜𝑑 𝑃𝑚𝑜𝑑 ,
+∑
+𝑚𝑜𝑑∈𝑚𝑜𝑑𝑠
+𝐶𝑚𝑜𝑑 = 1. (1)
+This process is repeated independently for four times to generate four 
+diﬀerent versions of a fused image, and a multichannel representation 
+̂𝑋 ∈ 𝑅4×𝐷×𝐻×𝑊  is constructed by concatenation of the four fused 𝐼𝑓 s.
+Our preliminary ﬁndings [25] suggest that reconstructing comple-
+mentary masked multimodal MRI enables a model to eﬀectively capture 
+cross-modal interactions. Building on a previous work [25], we here ex-
+tend the methodology by applying complementary masking not to the 
+raw MRI but to the fused images. To ensure that the strategy proposed 
+in [25] achieves its intended eﬀect of learning cross-modality relation-
+ships, we restrict each channel in ̂𝑋 primarily corresponds to a speciﬁc 
+input modality. For example, 𝐼 𝑇 1𝑓 , a channel of ̂𝑋 corresponding to the 
+T1w modality, should predominantly retain the content derived from 
+𝐼𝑇 1, and this is achieved through two key mechanisms: (1) for patches in 
+𝐼 𝑇 1𝑓 , the fusion weight 𝐶𝑇 1 corresponding to 𝐼𝑇 1 must be strictly positive 
+(𝐶𝑇 1 > 0), and (2) each patch in 𝐼 𝑇 1𝑓  has an equal probability of contain-
+ing one, two, three, or four modality components. The ﬁrst mechanism 
+guarantees that all image patches retain a certain proportion of the T1w 
+Information Fusion 133 (2026) 104345 
+3 
+J. Liang et al.
+Fig. 1. Overview of our proposed pipeline. ̂𝑋 is obtained by performing modality fusion and complementary masking to multimodal MRI 𝑋. The network is pre-
+trained by two pre-text tasks: fusion coeﬃcient regression and context restoration. ℎ𝜃 is the network backbone, ℎ𝜔 is the restoration head, and ℎ𝜖 is the regression 
+head. ⨂ denotes element-wise multiplication, ⨁ denotes sum across channels, ○ℂ denotes concatenation, and ○𝔹 denotes the binary operation.
+Fig. 2. Schematic illustration of the modality fusion and masked complementary modeling (mf-mcm) process. ﬁrst, we derive the Complementary Representation
+through a puzzle-like procedure, which is then used to generate the Complementary Mask. Next, we customize the fusion coeﬃcient maps. Finally, the Masked 
+Coeﬃcient Map is obtained by multiplying the Complementary Mask with the Coeﬃcient Map.
+content. And, the second mechanism ensures both the dominance of the 
+T1w modality in 𝐼 𝑇 1𝑓  (e.g., 25% of image patches in 𝐼 𝑇 1𝑓  satisfy 𝐶𝑇 1 = 1) 
+and the increased diversity of the fused data (e.g., 50% of patches in 𝐼 𝑇 1𝑓
+are expected to contain three or four modality components).
+3.1.2.  Masked complementary modeling
+While superior performance has been achieved by MIM-based meth-
+ods in various medical imaging tasks [37], their masking strategies typ-
+ically conceal identical regions in all modalities or apply random masks 
+to each modality independently, thus overlooking the intrinsic cross-
+modal correspondence during image reconstruction. To overcome this 
+limitation, we perform Masked Complementary Modeling (MCM); the 
+strategy is derived from our previous work [25]. In simple terms, com-
+plementary masking ensures that diﬀerent MRI modalities observe en-
+tirely distinct, non-overlapping regions of the brain. Since the network 
+must reconstruct the full volume for each modality, it cannot rely solely 
+on surrounding pixels within the same modality. This mechanism explic-
+itly drives the model to learn the synergistic relationships and structural 
+correspondences across diﬀerent MRI modalities.
+As illustrated in Fig. 2, we ﬁrst uniformly partition the brain MRI 
+into 𝐻ℎ × 𝑊𝑤 × 𝐷𝑑  image patches. Then these patches are randomly di-
+vided into four equal portions and assigned to the four fused images 
+corresponding to each modality to obtain the complementary represen-
+tation.
+Subsequently, a binary masking operation is applied to these com-
+plementary positions, masking 75% of patches in each channel of ̂𝑋. 
+The masked patches are replaced with zeros. Finally, the visible regions 
+across the four channels in ̂𝑋 become mutually exclusive and they com-
+plementarily constitute the entire brain space. By presenting the model 
+with these complementary "puzzle pieces", we encourage it to build 
+strong cross-modal bridges rather than relying solely on trivial intra-
+modal interpolation.
+3.2.  Pre-training
+3.2.1.  Network architecture
+We conduct comprehensive evaluations of our proposed method us-
+ing two distinct backbone architectures: (1) a 3D U-Net [45] based 
+on CNN, and (2) a Swin UNETR [41] architecture employing vision 
+transformer (ViT). The 3D U-Net implementation follows a symmet-
+ric encoder-decoder structure, where both components consist of hi-
+erarchically stacked convolutional blocks. These blocks are intercon-
+nected through successive downsampling and upsampling operations, 
+with skip connections incorporated to enable multi-scale feature aggre-
+gation. In contrast, Swin UNETR adopts a hybrid architectural paradigm. 
+Its encoder leverages both Window-based Multi-head Self-Attention (W-
+MSA) and Shifted Window-based Multi-head Self-Attention (SW-MSA) 
+modules to capture long-range dependencies. Spatial downsampling is 
+achieved through patch merging operations.
+3.2.2.  Pre-training strategy
+The input of the network ̂𝑋 is obtained by Modality Fusion and 
+Masked Complementary Masking (MF-MCM in Fig. 1). The model is 
+tasked with two primary objectives. The ﬁrst objective is to reconstruct 
+Information Fusion 133 (2026) 104345 
+4 
+J. Liang et al.
+the original multimodal MRI. An encoder-decoder network ℎ𝜃 is used 
+to extract latent features:  = ℎ𝜃( ̂𝑋). A reconstruction head ℎ𝜔 is used 
+to predict the voxel intensity values: 𝐼 𝑟𝑒𝑐 = ℎ𝜔( ). This process encour-
+ages the model to learn the intensity distributions of the multimodal 
+brain MRI and the cross-modal interactions. The model is trained to 
+minimize the diﬀerence between the restored images and the original 
+ones. Speciﬁcally, 𝐿2-loss is employed for image reconstruction
+𝑟𝑒𝑐 = (𝑋 − 𝐼 𝑟𝑒𝑐 )2. (2)
+The second objective is to regress the fusion coeﬃcients. A regres-
+sion head ℎ𝜖 is employed to predict the fusion coeﬃcients: 𝐼 𝑟𝑒𝑔 = ℎ𝜖( ). 
+This process enhances the model’s ability to capture cross-modality re-
+lationships and encourages the model to recognize the overall style of 
+each modality by decoupling all modalities from each fused image. The 
+𝐿2-loss is also employed for this task
+𝑟𝑒𝑔 = (𝑀 − 𝑀1 × 𝐼 𝑟𝑒𝑔)2, (3)
+where 𝑀 ∈ 𝑅16×𝐻×𝑊 ×𝐷 is the masked coeﬃcient map and 𝑀1 ∈
+𝑅16×𝐻×𝑊 ×𝐷 is the complementary mask. 𝑀 has 16 channels because 
+each fused image requires four masked coeﬃcient maps (a single row of 
+the masked coeﬃcient map in Fig. 2) to represent the contributions of 
+the four modalities and the four fused images are concatenated to input 
+to the network. The framework is pre-trained by optimizing an overall 
+loss
+ = 𝑟𝑒𝑐 + 𝑟𝑒𝑔. (4)
+3.3.  Downstream segmentation
+In a downstream segmentation task, the pre-trained model’s weights 
+of ℎ𝜃 are transferred to initialize the segmentation model. To obtain the 
+segmentation map 𝐼 𝑠𝑒𝑔, the reconstruction head and the regression head 
+are replaced with a segmentation head ℎ𝜙(𝑧) = 𝐼 𝑠𝑒𝑔, and its parameters 
+are randomly initialized. In the ﬁne-tuning stage, 𝑠𝑒𝑔 is used as the 
+consistency metric between the output segmentation and the ground 
+truth. 𝑠𝑒𝑔 combines the Dice Loss 𝐷𝑖𝑐𝑒 and the Cross-Entropy Loss 𝐶𝐸
+following [8], and is computed as
+𝑠𝑒𝑔 = 𝛼𝐷𝑖𝑐𝑒 + 𝛽𝐶𝐸 . (5)
+Here, 𝛼 and 𝛽 denote the weighting coeﬃcients for the two loss terms, 
+both empirically set to 0.5 by default.
+In real-life medical scenarios, the available modalities are typically 
+incomplete. To further validate the robustness of our approach, we 
+conduct experiments where some modalities are missing. For missing 
+modalities, we insert zero-valued images of matching spatial dimen-
+sions, maintaining a consistent input size of multimodal imaging.
+4.  Experiments
+4.1.  Datasets
+The BraTS2023-Adult Glioma (GLI) dataset [20] is used to pre-train 
+our MF-MCM. Speciﬁcally, we randomly select 900 MRI data, with four 
+MR modalities, from the GLI dataset and their tumor segmentation labels 
+are not used during the pre-training phase. We comprehensively eval-
+uate MF-MCM on ﬁve benchmark datasets: four multimodal MRI brain 
+tumor datasets including GLI (samples not used during pre-training), 
+BraTS2023-Africa (SSA) [21], BraTS2023-Pediatric Tumors (PED) [22] 
+and BraTS2023-Brain Metastases (MET) [23], and one T1w MRI brain 
+lesion dataset (the Anatomical Tracings of Lesions After Stroke R2.0 (AT-
+LAS2) dataset) [24]. Here, we adopt only the oﬃcial training sets of the 
+ﬁve datasets, since the ROI masks of the test set are unseen.
+The GLI dataset (𝑁 = 1251) comprises multimodal 3D MRI data and 
+segmentation labels for adult gliomas. The SSA dataset (𝑁 = 60) is the 
+largest publicly available annotated cohort of pre-operative glioma MRI 
+data for adults of African descent. The PED dataset (𝑁 = 99) oﬀers the 
+largest annotated cohort of high-grade glioma MRI data in children. The 
+Table 1 
+The sample sizes of the training, validation, and testing sets 
+for the ﬁve datasets used in the ﬁne-tuning stage.
+ Dataset  Training  Validation  Testing  Total
+ GLI [20]  210  70  71  351
+ SSA [21]  36  6  18  60
+ PED [22]  60  9  30  99
+ MET [23]  143  22  73  238
+ ATLAS2 [24]  393  65  197  655
+MET dataset (𝑁 = 238) consists of treatment-naive brain metastasis MRI 
+data from various institutions under standard clinical conditions. Each 
+case includes four co-registered MRI modalities: T1w, T2w, T1ce, and 
+FLAIR. Voxel-level annotations are provided for each case, identifying 
+the necrotic and non-enhancing tumor core (NET), enhancing tumor 
+(ET), edema (ED), and background (BG). A standardized pre-processing 
+procedure is applied, including co-registration to the SRI24 template, 
+resampling to 1 mm isotropic resolution, and skull-stripping.
+The brain lesion dataset (ATLAS2, 𝑁 = 655) contains T1w MRI scans 
+with manually segmented lesion masks from 44 research cohorts, and 
+all images are normalized to the MNI152 non-linear 2009a symmetric 
+template. In our study, the GLI (ﬁne-tuning cohort), SSA, MET, PED, and 
+ATLAS2 datasets are divided into training, validation, and testing sets. 
+Table 1 presents the dataset splits.
+4.2.  Implementation details
+All images in the ﬁve datasets undergo comprehensive pre-
+processing, including background cropping, intensity range clipping be-
+tween the 1𝑠𝑡 and 99𝑡ℎ percentiles of the original distribution, and then 
+normalization to have zero mean and unit variance. During pre-training, 
+we apply data augmentation through random spatial transformations, 
+including random zooming (with a zooming range from 0.7 to 1.4), 
+random cropping (with an image size of 128 × 128 × 128), and random 
+rotation (spanning from 30◦ to −30◦) to enlarge the pre-training set. 
+For ﬁne-tuning, we additionally incorporate Gamma correction (with a 
+range from 0.7 to 1.5) alongside the pre-training augmentation pipeline.
+We employ the AdamW optimizer with momentum parameters 𝛽1 =
+0.9 and 𝛽2 = 0.999, a weight decay of 1e-5, and a batch size of 4 for 
+both the pre-training and ﬁne-tuning phases. The model undergoes 800 
+epochs for pre-training and 300 epochs for ﬁne-tuning, with validation 
+performed at 10-epoch intervals during ﬁne-tuning to select the best-
+performing model. The learning rate follows a cosine decay schedule 
+with a 50-epoch warm-up period, initialized at 3e-4 for pre-training and 
+1e-4 for ﬁne-tuning. All experiments are performed using PyTorch 2.0.1 
+on a workstation equipped with NVIDIA RTX 3090 GPUs. Performance 
+is evaluated using the Dice Similarity Coeﬃcient (DSC), 95th percentile 
+Hausdorﬀ Distance (HD95), and Average Symmetric Surface Distance 
+(ASSD). In cases where a "false positive" occurs (prediction exists but 
+ground truth is empty) or a "false negative" occurs (ground truth exists 
+but prediction is empty), both HD95 and ASSD are assigned a maximum 
+penalty value of 373.12866𝑚𝑚. This value corresponds to the spatial di-
+agonal of the image volume in BraTS challenge datasets: 240 × 240 × 155
+[20]. We evaluate the brain tumor segmentation performance on three 
+clinically relevant subregions: the whole tumor (WT), the tumor core 
+(TC, the combination of NET and ET), and the enhancing tumor (ET).
+In our extensive experiments, we benchmark a range of SSL meth-
+ods that employ CNN (3D-UNet) or ViT (Swin UNETR) as the backbone 
+for volumetric medical image pre-training. These methods fall into four 
+categories: (1) context restoration based on customized data augmenta-
+tion, including Models Genesis [35], (2) context restoration that incor-
+porates medical prior, including ASA [37], SwinMM [39], and TransVW 
+[38], (3) hybrid methods that combine multiple SSL techniques, includ-
+ing PCRLv2 [40] and Tang et al. [8], and (4) multimodal SSL frame-
+works designed for multimodal brain MRI imaging, including M3AE [18] 
+Information Fusion 133 (2026) 104345 
+5 
+J. Liang et al.
+and BrainMVP [19]. To ensure a fair comparison, we pre-train all com-
+parison methods from scratch using the same pre-training data as that 
+used in this study, based on their oﬃcial repositories. Given that sub-
+stantially more single-modal medical images are available compared to 
+multimodal data, we verify whether pre-training strategies tailored for 
+single-modal images shall achieve superior performance by leveraging 
+a much larger amount of pre-training data. Therefore, we additionally 
+compare the segmentation performance of ASA and SwinMM by ﬁne-
+tuning their publicly released pre-trained weights, both pre-trained on 
+large-scale single-modal datasets, ASA on 11,993 T1w MRI scans and 
+SwinMM on 5833 CT scans. Please note, since PCRLv2 employs a net-
+work without skip connections, we maintain this network structure as 
+the backbone for this method. Meanwhile, for comparative methods 
+originally designed for single-modal data, we adapt them to multimodal 
+MRI by stacking all modalities as model input and modifying the in-
+put layer to accommodate the four-channel input. When ﬁne-tuing pub-
+licly released pre-trained weights of ASA and SwinMM, we replicate 
+the weights of the input layer for four times to accommodate the four-
+channel input. We refer to models trained from scratch as ’scratch’ in 
+the following sections.
+5.  Results
+5.1.  Evaluation on brain tumor segmentation
+5.1.1.  Glioma
+GLI. Table 2 details the quantitative comparisons on the GLI dataset 
+across DSC, HD95, and ASSD metrics. Methods with strict assumptions 
+of anatomical symmetry or cross-subject consistency, such as TransVW 
+and ASA, demonstrate marginal improvements or even performance 
+degradation compared to scratch. This incompatibility stems from the 
+intrinsic morphological heterogeneity of gliomas. Conversely, relaxing 
+these assumptions (PCRLv2, Models Genesis) or leveraging perspective-
+invariant semantic consistency (SwinMM) aligns better with glioma 
+characteristics, yielding clear performance gains. Among the competi-
+tors, M3AE and Tang et al. show strong performance under CNN and 
+ViT backbones, respectively. Nevertheless, our MF-MCM consistently 
+demonstrates superior tumor boundary delineation, an advantage di-
+rectly reﬂected in the distance-based metrics. Under the CNN backbone, 
+MF-MCM outperforms M3AE by 0.52% in average DSC and reduces the 
+average ASSD by a notable 1.75𝑚𝑚 (from 6.35𝑚𝑚 to 4.60𝑚𝑚), while 
+achieving a highly competitive average HD95 of 7.92𝑚𝑚 (comparable 
+to BrainMVP’s 7.87𝑚𝑚). Under the ViT backbone, MF-MCM achieves 
+SOTA performance across all metrics, surpassing Tang et al. with a 
+1.13% increase in average DSC, alongside reductions of 0.28𝑚𝑚 and 
+0.04𝑚𝑚 in average HD95 and ASSD, respectively. These comprehensive 
+improvements validate MF-MCM’s exceptional capability in capturing 
+cross-modal relationships to precisely delineate complex tumor bound-
+aries.
+SSA and PED. Table 3 presents the quantitative evaluation on the 
+SSA dataset. When employing 3D-UNet as the backbone, most SSL meth-
+ods exhibit consistent performance trends relative to the scratch base-
+line across both SSA and GLI datasets, suggesting similar imaging dis-
+tributions between adult glioma cohorts of diﬀerent ethnic groups. No-
+tably, our MF-MCM maintains a signiﬁcant advantage in boundary pre-
+cision. For instance, under the CNN backbone, MF-MCM achieves the 
+lowest average HD95 (4.99𝑚𝑚) and ASSD (1.19𝑚𝑚), outperforming the 
+competitive M3AE which shows higher distance errors (HD95: 9.87𝑚𝑚; 
+ASSD: 2.50𝑚𝑚). However, when switching to the Swin UNETR back-
+bone, existing SSL methods show performance degradation compared 
+to scratch, whereas MF-MCM demonstrates superior robustness by im-
+proving the average DSC to 88.10% and reducing the average HD95 
+to 5.67𝑚𝑚. As illustrated in Fig. 3, our MF-MCM eﬀectively segments 
+challenging regions, namely ET and NET areas, in both GLI and SSA 
+datasets. As shown in Table 4, the domain shift challenge is more pro-
+nounced in the PED dataset. We observe that most SOTA SSL methods 
+undergo signiﬁcant performance drops compared to the scratch base-
+line. This is attributed to the substantial domain discrepancy between 
+adult and pediatric gliomas, which diﬀer in both anatomical locations 
+(pons vs. frontal/temporal lobes) and imaging characteristics [22]. Al-
+though M3AE and BrainMVP are tailored for multimodal brain MRI, 
+their reliance on ﬁxed modality templates during pre-training hinders 
+their adaptability to pediatric anatomy. In contrast, MF-MCM consis-
+tently outperforms all comparative methods across diﬀerent architec-
+tures. Under the CNN backbone, it achieves an average DSC of 75.30% 
+and a marked reduction in boundary errors (average ASSD: 23.74𝑚𝑚 vs. 
+M3AE’s 24.13𝑚𝑚). Even in the ViT-based PED evaluation, where Tang et 
+al. and SwinMM show strength in speciﬁc regions, MF-MCM maintains 
+the best overall performance with an average DSC of 74.60% and the 
+lowest average HD95 of 26.82𝑚𝑚. These results conﬁrm that by eﬀec-
+tively capturing cross-modal relationships, MF-MCM exhibits superior 
+generalizability across diverse age groups and data distributions.
+5.1.2.  Other types of brain tumors
+MET. We further assess the segmentation performance on brain 
+metastasis (MET). As shown in Table 5, MF-MCM consistently achieves 
+superior performance across most metrics. Speciﬁcally, MF-MCM yields 
+average DSC improvements of 0.85% (3D-UNet) and 3.19% (Swin UN-
+ETR) over the scratch. Similar to the trends observed on the PED dataset, 
+most SSL methods exhibit performance degradation, which we attribute 
+to the substantial domain discrepancy between MET and GLI, partic-
+ularly regarding tumor sites and morphology. In the CNN-based eval-
+uation, MF-MCM outpaces M3AE by reducing the average HD95 from 
+27.32𝑚𝑚 to 26.16𝑚𝑚 and the average ASSD from 19.04𝑚𝑚 to 18.55𝑚𝑚. 
+Under the ViT backbone, while SwinMM achieves a lower average ASSD, 
+MF-MCM maintains the highest segmentation overlap (73.25% DSC) 
+and the best HD95 of 20.93𝑚𝑚. These results further highlight MF-MCM’s 
+ability to eﬀectively capture cross-modal interactions, enabling robust 
+generalization across diverse brain tumor types.
+Across all four downstream brain tumor segmentation tasks, MF-
+MCM consistently achieves the best overall performance, regardless of 
+whether the backbone is 3D-UNet or Swin UNETR. It outperforms both 
+M3AE and BrainMVP which are speciﬁcally designed for multimodal 
+brain MRI, particularly in reducing distance-based errors where the 
+baseline methods often struggle. The results further show that SSL meth-
+ods for single-modal imaging, even when pre-trained on substantially 
+larger single-modal datasets, still fall short of our MF-MCM in brain tu-
+mor segmentation. The average DSC values across the four tasks clearly 
+reﬂect this trend (ASA: 77.51%, SwinMM: 78.26%, MF-MCM: 80.06%). 
+These ﬁndings indicate that for brain tumor segmentation, equipping the 
+model with explicit cross-modal interaction and multimodal fusion ca-
+pabilities can eﬀectively compensate for the smaller size of multimodal 
+pre-training data, ultimately leading to boundary delineation accuracy.
+5.2.  Evaluation on brain lesion segmentation
+ATLAS2. We evaluate the downstream performance of MF-MCM on 
+single-modal T1w MRI for the segmentation of stroke lesions. As shown 
+in Table 6, TransVW and ASA underperform the scratch, likely due to 
+their underlying assumptions being incompatible with the imaging char-
+acteristics of stroke lesions. In contrast, SwinMM outperforms scratch, 
+particularly when leveraging open-source weights pre-trained on large-
+scale CT scans, demonstrating the beneﬁt of cross-domain knowledge. 
+Our MF-MCM demonstrates robust performance across diﬀerent back-
+bones, outperforming the best alternative SSL methods by 0.49% (CNN) 
+and 2.65% (ViT) in mean DSC. Notably, under the ViT backbone, MF-
+MCM achieves SOTA results across all metrics, reducing the average 
+HD95 and ASSD to 17.56𝑚𝑚 and 5.58𝑚𝑚, respectively, a signiﬁcant im-
+provement over SwinMM leveraging open-source weights. Under the 
+CNN backbone, while M3AE exhibits slightly better boundary distances, 
+MF-MCM maintains the highest segmentation overlap (61.59% DSC). 
+Information Fusion 133 (2026) 104345 
+6 
+J. Liang et al.
+Table 2 
+Quantitative comparisons with SOTA SSL methods on the GLI dataset. The best results are in bold, and the second-best results are 
+underlined. Fine-tuning using the original open source weights is marked by †. "∗" indicates that MF-MCM is statistically signiﬁcantly 
+diﬀerent from the best-performing compared method (𝑝 < . 05, Wilcoxon matched-pairs signed rank test).
+Methods  DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ CNN Backbone
+ Scratch 86.90 89.42 79.51 85.31  4.44  4.78 19.38 9.53 1.41  1.25 16.90 6.52
+ TransVW [38] 85.70 91.17 80.09 85.65 4.90  5.13 19.36 9.80 1.52 1.21 16.87 6.53
+ PCRLv2 [40] 88.95 90.55 78.40 85.97 3.92  5.42 19.31 9.55 1.19 1.32 16.82 6.44
+ Models Genesis [35] 87.70 91.26 83.14 87.37  9.20  5.75 18.66 11.21 6.41 1.28 16.63 8.11
+ BrainMVP [19] 87.89 90.84 82.29 87.01  4.13  5.89 13.58 𝟕.𝟖𝟕 1.38  1.29 11.36 4.68
+ M3AE [18] 89.24 𝟗𝟐.𝟐𝟑 83.03 88.16  3.70 5.02 18.80 9.17 𝟏.𝟏𝟔 𝟏.𝟏𝟕 16.70 6.35
+ MF-MCM 𝟖𝟗.𝟓𝟓 91.80 𝟖𝟒.𝟕𝟏∗ 𝟖𝟖.𝟔𝟖∗  4.59  5.76 𝟏𝟑.𝟒𝟎 7.92  1.27  1.25 𝟏𝟏.𝟑𝟎 𝟒.𝟔𝟎
+ ViT Backbone
+ Scratch 88.47 91.92 81.15 87.18 4.62  4.65 19.45 9.57 1.24 1.15 16.81 6.40
+ SwinMM†[39] 87.66 88.41 82.02 86.03 24.59 26.97 18.79 23.45 6.28 5.31 16.73 9.44
+ ASA [37] 87.28 91.23 81.21 86.58 4.66 5.37 19.20 9.74 1.29 1.21 16.71 6.40
+ ASA†[37] 87.16 90.94 82.45 86.85 10.28 8.02 19.54 12.62 6.73 1.60 16.73 8.35
+ SwinMM [39] 87.44 91.42 83.05 87.30 4.67 5.45 24.45 11.52 1.39  1.17 21.83 8.13
+ Tang et al. [8] 87.75  91.76 82.90 87.47 4.29  4.88 13.93 7.70 1.25 1.12 11.48 4.62
+ MF-MCM 𝟖𝟗.𝟓𝟏∗ 𝟗𝟐.𝟑𝟖∗ 𝟖𝟑.𝟖𝟗∗ 𝟖𝟖.𝟔𝟎∗ 𝟑.𝟖𝟓∗ 4.73 𝟏𝟑.𝟔𝟗 𝟕.𝟒𝟐∗ 𝟏.𝟐𝟏∗ 𝟏.𝟎𝟔 𝟏𝟏.𝟒𝟕∗ 𝟒.𝟓𝟖∗
+Table 3 
+Quantitative comparisons with SOTA SSL methods on the SSA dataset. The best results are in bold, and the second-best results are 
+underlined. Fine-tuning using the original open source weights is marked by †. "∗" indicates that MF-MCM is statistically signiﬁcantly 
+diﬀerent from the best-performing compared method (𝑝 < . 05, Wilcoxon matched-pairs signed rank test).
+Methods  DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ CNN Backbone
+ Scratch 82.06 91.09 79.50 84.21 12.25 9.13  7.11 9.50 2.88  1.88  1.57 2.11
+ TransVW [38] 78.39 90.53 79.65 82.86 9.51 7.25  7.15 7.97 2.97 1.76 1.75 2.16
+ PCRLv2 [40] 84.90 90.69 80.59 85.79  7.34 4.75 𝟒.𝟔𝟏 5.57  2.89 1.40 1.36 1.88
+ Models Genesis [35] 85.53 90.72 83.29 86.51 8.41 6.08  5.44 6.64 2.15 1.51  1.35 1.67
+ BrainMVP [19]  87.62 90.89 83.49 87.33 𝟓.𝟗𝟔 7.55  4.93 6.15 1.40 1.62 1.12 1.38
+ M3AE [18] 𝟖𝟖.𝟕𝟓 89.97 84.54 87.75  9.09 12.14 8.39 9.87 2.42 2.92 2.15 2.50
+ MF-MCM 88.39 𝟗𝟐.𝟔𝟒∗ 𝟖𝟓.𝟒𝟕∗ 𝟖𝟖.𝟗𝟎∗ 6.39 𝟑.𝟗𝟕 4.62 𝟒.𝟗𝟗 𝟏.𝟑𝟖 𝟏.𝟏𝟎∗ 𝟏.𝟎𝟖 𝟏.𝟏𝟗∗
+ ViT Backbone
+ Scratch 83.24 91.33 82.74 85.77  8.38 4.70  5.17 6.08  2.81 1.26 1.26  1.78
+ SwinMM† [39] 75.61 90.71 80.78 82.37 11.28  4.90 6.65 7.61 3.10  1.36 1.61 2.02
+ ASA [37] 79.70 90.42 81.59 83.90  9.93 7.71 4.38 7.34 3.40 1.51 1.16 2.02
+ ASA† [37] 80.10 91.87 83.30 85.09  9.74 4.39  4.66  6.26  3.23 1.21 1.14  1.86
+ SwinMM [39] 81.79  91.11 82.06 84.99 𝟕.𝟏𝟑 7.93 𝟒.𝟏𝟖  6.41 𝟏.𝟖𝟓 1.66 1.12 𝟏.𝟓𝟒
+ Tang et al. [8] 78.35 89.73 79.67 82.58  9.78 7.16 6.66 7.87 3.17 1.64 1.67 2.16
+ MF-MCM 𝟖𝟔.𝟐𝟑∗ 𝟗𝟐.𝟑𝟕 𝟖𝟓.𝟔𝟕∗ 𝟖𝟖.𝟏𝟎∗ 8.05 𝟑.𝟗𝟒∗  5.02 𝟓.𝟔𝟕 2.71 𝟏.𝟎𝟗 𝟏.𝟎𝟓∗ 1.62
+Table 4 
+Quantitative comparisons with SOTA SSL methods on the PED dataset. The best results are in bold, and the second-best results are 
+underlined. Fine-tuning using the original open source weights is marked by †. "∗" indicates that MF-MCM is statistically signiﬁcantly 
+diﬀerent from the best-performing compared method (𝑝 < . 05, Wilcoxon matched-pairs signed rank test).
+Methods  DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ CNN Backbone
+ Scratch 81.52 85.77  52.74 73.34 5.72 4.98 83.39 31.36 1.86 1.46 80.34 27.88
+ TransVW [38] 79.81 84.66 𝟓𝟒.𝟓𝟐 72.99 6.28 5.52 84.40 32.07 2.14 1.74 80.14 28.01
+ PCRLv2 [40] 79.22 82.51 47.16 69.63 6.96 5.93 82.33 31.74 2.28 1.88 78.67 27.61
+ Models Genesis [35] 77.69 82.27 48.50 69.48 7.02 5.72 72.79 28.51 2.25 1.78 68.81 24.28
+ BrainMVP [19] 81.84 86.67 44.10 70.87 6.96 6.85 85.05 32.95 2.30 1.79 80.97 28.35
+ M3AE [18] 82.10 85.79 44.13 70.67  6.27  6.19 72.27 28.24  1.94  1.63 68.82 24.13
+ MF-MCM 𝟖𝟒.𝟒𝟏∗ 𝟖𝟕.𝟑𝟗∗ 54.09 𝟕𝟓.𝟑𝟎∗ 𝟒.𝟗𝟕∗ 𝟒.𝟎𝟕∗ 𝟕𝟏.𝟓𝟗 𝟐𝟔.𝟖𝟖∗ 𝟏.𝟓𝟖∗ 𝟏.𝟐𝟑 𝟔𝟖.𝟒𝟏∗ 𝟐𝟑.𝟕𝟒∗
+ ViT Backbone
+ Scratch 81.74 86.49 50.56 72.93 5.72 4.98  83.39 31.36 1.86 1.46  80.34 27.88
+ SwinMM† [39] 𝟖𝟑.𝟗𝟒 𝟖𝟗.𝟐𝟖 48.19 73.81 5.47 4.11  70.99 26.86  1.63 1.25  68.15  23.68
+ ASA [37] 79.77 85.48 51.62 72.29 6.25 4.82 72.09 27.72 2.05 1.47 68.42 23.98
+ ASA† [37] 80.34 86.06 51.91 72.78 6.05 5.08 84.40 31.84 1.96 1.50  80.89 28.12
+ SwinMM [39]  81.56  86.35 47.95 71.95  9.21  7.84  93.99  37.01  4.34  3.78  89.93  32.68
+ Tang et al. [8] 78.97 85.05 𝟓𝟓.𝟖𝟗 73.30 7.53 7.59 72.35 29.16 2.14 2.11 68.66 24.30
+ MF-MCM 83.04 87.00∗ 53.75∗ 𝟕𝟒.𝟔𝟎∗ 𝟓.𝟏𝟕 𝟑.𝟖𝟒 71.43 𝟐𝟔.𝟖𝟐 𝟏.𝟔𝟑 𝟏.𝟏𝟒∗ 68.51 23.76
+Information Fusion 133 (2026) 104345 
+7 
+J. Liang et al.
+Table 5 
+Quantitative comparisons with SOTA SSL methods on the MET dataset. The best results are in bold, and the second-best results are 
+underlined. Fine-tuning using the original open source weights is marked by †. "∗" indicates that MF-MCM is statistically signiﬁcantly 
+diﬀerent from the best-performing compared method (𝑝 < . 05, Wilcoxon matched-pairs signed rank test).
+Methods  DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ CNN Backbone
+ Scratch 75.78  73.16 69.20 72.71  28.50  27.45  28.53  28.16 19.72  19.14  19.76  19.54
+ TransVW [38] 64.98 67.51 61.21 64.57 40.06 31.33 38.97 36.78 25.45 21.03 25.20 23.89
+ PCRLv2 [40] 74.45 72.74 66.74 71.31 27.39 𝟐𝟓.𝟒𝟏 27.76 26.86 19.31 18.97 19.30 19.19
+ Models Genesis [35] 70.84 70.74 65.93 69.17 35.47 27.85 34.34 32.55 21.08 𝟏𝟕.𝟑𝟗 20.93 19.80
+ BrainMVP [19] 74.41  72.40 68.15 71.65 29.89  26.83 28.48 28.40 19.55  19.06 19.38  19.33
+ M3AE [18] 76.61 𝟕𝟒.𝟐𝟔 70.21 73.69 27.97 25.97  28.00  27.32 19.32  18.54 19.25 19.04
+ MF-MCM 𝟕𝟖.𝟒𝟓∗ 74.22 𝟕𝟎.𝟗𝟒∗ 𝟕𝟒.𝟓𝟒∗ 𝟐𝟔.𝟏𝟖∗  26.37 𝟐𝟓.𝟗𝟑∗ 𝟐𝟔.𝟏𝟔∗ 𝟏𝟖.𝟔𝟏∗ 18.46 𝟏𝟖.𝟓𝟖∗ 𝟏𝟖.𝟓𝟓
+ ViT Backbone
+ Scratch 72.21 71.11 66.86 70.06 35.00 25.05 31.70 30.59 24.58 17.20 20.40 20.73
+ SwinMM† [39] 73.36 72.04 67.14 70.85 28.89 24.66 29.24 27.60 19.92 15.71 19.88 18.50
+ ASA [37] 63.74 66.85 59.14 63.24 44.94 37.78 49.11 43.94 33.92 28.78 38.83 33.84
+ ASA† [37] 66.44 68.78 60.81 65.35 50.56 34.98 49.89 45.14 40.65 26.90 40.56 36.03
+ SwinMM [39]  73.18  71.75 67.92 70.95 26.70 19.47 25.59 23.92 𝟏𝟎.𝟎𝟏 𝟓.𝟔𝟓 𝟏𝟎.𝟏𝟒 𝟖.𝟔𝟎
+ Tang et al. [8] 67.58 69.43 63.84 66.95 29.99 26.52 29.19 28.57 13.21 9.13 12.81 11.72
+ MF-MCM 𝟕𝟔.𝟐𝟒∗ 𝟕𝟑.𝟗𝟎∗ 𝟔𝟗.𝟔𝟐 𝟕𝟑.𝟐𝟓∗ 𝟐𝟐.𝟕𝟓∗ 𝟏𝟕.𝟑𝟑 𝟐𝟐.𝟕𝟏 𝟐𝟎.𝟗𝟑∗  14.30 7.32  14.24  11.95
+Table 6 
+Quantitative comparisons with SOTA SSL methods on the ATLAS2 dataset. The best results are in bold, and 
+the second-best results are underlined. Fine-tuning using the original open source weights is marked by †. 
+"∗" indicates that MF-MCM is statistically signiﬁcantly diﬀerent from the best-performing compared method 
+(𝑝 < . 05, Wilcoxon matched-pairs signed rank test).
+ Methods  Dice (↑)  HD95 (↓)  ASSD (↓)  Methods  Dice (↑)  HD95 (↓)  ASSD (↓)
+ CNN Backbone  ViT Backbone
+ Scratch 58.32 28.19 17.14  Scratch 58.08 25.42 15.04
+ TransVW [38] 53.60 26.72 16.17  SwinMM† [39] 59.13 21.79 6.46
+ PCRLv2 [40]  57.28 35.18 23.72  ASA [37] 54.41 34.35 22.37
+ Models Genesis [35] 57.53 19.46 7.75  ASA† [37] 54.30 30.46 17.78
+ BrainMVP [19] 61.10  19.71  8.75  SwinMM [39]  59.03 20.05  8.94
+ M3AE [18] 60.56  19.28  6.11  Tang et al. [8] 55.84 28.84 16.38
+ MF-MCM  61.59  19.90  8.89  MF-MCM 61.78∗ 17.56∗ 5.58∗
+These results conﬁrm that MF-MCM, despite being pre-trained on mul-
+timodal data, eﬀectively generalizes to single-modal tasks, providing 
+more precise localization of stroke lesions.
+5.3.  Ablation study
+Ablation analyses are performed on the GLI dataset to investigate 
+the mechanism and eﬀectiveness of our method in three aspects: (1) the 
+contribution of each component, (2) the eﬀect of the training set size, 
+and (3) the impact of the available modalities. All ablation experiments 
+are performed using 3D-UNet as the backbone network.
+5.3.1.  Eﬃcacy of MF-MCM’s main components
+Table 7 presents the results assessing MF-MCM’s main components: 
+MCM and MF, evaluated across DSC, HD95, and ASSD metrics. To 
+demonstrate the advantages of our method over conventional MIM, we 
+implement a random masking baseline that randomly masks 75% of 
+regions per modality (the 2nd row). MCM enhances MIM by explicitly 
+modeling cross-modal relationships, achieving a 1.15% average DSC im-
+provement alongside substantial reductions in boundary errors, decreas-
+ing the average HD95 from 15.08𝑚𝑚 to 10.69𝑚𝑚 and the average ASSD 
+from 7.41𝑚𝑚 to 6.53𝑚𝑚 (the 2nd row 𝑣𝑠. the 3rd row). The MF component 
+strengthens the capture of the cross-modality relationship while enrich-
+ing data diversity, and this can be demonstrated by a further 0.40% av-
+erage DSC improvement and consistent decreases in the average HD95 
+(to 9.16𝑚𝑚) and ASSD (to 6.28𝑚𝑚) (the 3rd row 𝑣𝑠. the 4th row). Fur-
+thermore, incorporating the regression objective of 𝑟𝑒𝑔 enhances the 
+model’s performance by decoupling modality-speciﬁc components from 
+the fused representation. This is clearly evidenced by the overall best 
+boundary delineation performance, where the average HD95 and ASSD 
+further drop to 7.92𝑚𝑚 and 4.60𝑚𝑚, respectively, while the average DSC 
+peaks at 88.68% (the 4th row 𝑣𝑠. the 𝑙𝑎𝑠𝑡 row). These results validate 
+our method’s eﬀectiveness in leveraging complementary multimodal in-
+formation to improve downstream segmentation accuracy and spatial 
+boundary precision.
+5.3.2.  Data eﬃciency
+To assess data eﬃciency, we conduct comparative experiments be-
+tween our method and scratch on varying dataset sizes ranging from 1 to 
+210 samples. As illustrated in Fig. 4, MF-MCM demonstrates remarkable 
+data eﬃciency: (1) achieving 80.04% average Dice with 10 samples; (2) 
+surpassing scratch’s 210-sample performance when trained on 40 sam-
+ples; and (3) reaching 88.11% average Dice (merely 0.52% below the 
+210-sample performance) with 60 samples. These ﬁndings conclusively 
+demonstrate the ability of MF-MCM to maintain high segmentation ac-
+curacy while substantially reducing annotation requirements by at least 
+40%.
+5.3.3.  Modality interaction
+As summarized in Tables 8–10, MF-MCM consistently outperforms 
+scratch across all modality conﬁgurations, indicating that the pre-
+trained representation through MF-MCM generalizes well even with 
+incomplete multimodal information. Speciﬁcally, with only one avail-
+able modality, MF-MCM achieves improvements of 5.11% (T1w), 6.19% 
+(T1ce), 3.68% (T2w), and 3.06% (FLAIR) in the average DSC, respec-
+tively. Concurrently, MF-MCM signiﬁcantly mitigates boundary distance 
+errors under severe modality-missing scenarios. For instance, when us-
+ing only the T1ce modality, MF-MCM reduces the average HD95 from 
+14.48𝑚𝑚 to 9.39𝑚𝑚 and the average ASSD from 8.19𝑚𝑚 to 5.24𝑚𝑚 com-
+pared to training from scratch. Notably, MF-MCM achieves an average 
+Information Fusion 133 (2026) 104345 
+8 
+J. Liang et al.
+Fig. 3. Qualitative comparisons between MF-MCM and SOTA SSL methods on representative images from each evaluated dataset. Obvious visual improvements are 
+highlighted with bounding boxes.
+Table 7 
+Importance of main components and pre-text tasks. MCM and MF denote Masked Complementary Modeling and Modality Fusion. The best results 
+are in bold, and the second-best results are underlined. "∗" indicates statistically signiﬁcantly diﬀerent performance (𝑝 < . 05, Wilcoxon matched-pairs 
+signed-rank test) between versions with and without the speciﬁc component.
+MCM MF 𝑟𝑒𝑐 𝑟𝑒𝑔
+ DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ -  -  -  -  86.90  89.42  79.51  85.31 4.44  4.78  19.38  9.53  1.41 1.25  16.90  6.52
+ -  -  !  -  88.53∗  90.16  82.00∗  86.83∗  11.83∗  13.11∗  20.30  15.08∗  2.61  2.71∗  16.89  7.41∗
+ !  -  !  - 89.76 91.11∗ 83.12∗  87.98∗  5.30∗  7.45∗  19.33  10.69∗  1.30∗  1.68∗  16.62∗  6.53∗
+ !  !  !  -  90.96∗  91.09  83.09∗ 88.38∗  3.64∗ 5.23∗ 18.61∗ 9.16∗  1.13∗  1.12∗ 16.57∗ 6.28∗
+ !  !  !  !  89.55  91.80∗  84.71∗  88.68∗  4.59  5.76  13.40∗  7.92∗ 1.27 1.25  11.30∗  4.60∗
+DSC of 84.74% using only the T1ce modality, and the combination of 
+T1ce and FLAIR (achieving an average DSC of 88.26% and a low aver-
+age ASSD of 6.31𝑚𝑚) even surpasses several representative SSL methods 
+that utilize all four modalities during downstream ﬁne-tuning.
+To further investigate the optimal approach to handle incomplete or 
+degraded modalities, we compare diﬀerent ﬁlling strategies in a scenario 
+where only T1ce is available as a high-quality image. We evaluate four 
+methods to represent missing or corrupted modalities: (1) ﬁlling with 
+Gaussian Noise, (2) duplicating the available high-quality modality (di-
+rectly copying the available high-quality modality into the slots of all 
+missing or corrupted modalities), (3) using low quality modality images 
+(simulating corrupted modalities by 5× down-sampling followed by 5×
+up-sampling), and (4) zero padding. As presented in Table 11, speciﬁc 
+strategies yield localized advantages: repeated T1ce achieves the most 
+precise TC delineation, likely because multi-channel redundancy ampli-
+ﬁes the intensity gradients of the TC, while low-quality images enhance 
+WT segmentation by providing coarse anatomical priors that constrain 
+the global spatial extent. Nevertheless, zero padding maintains the best 
+overall trade-oﬀ, securing the highest average DSC of 84.74% and min-
+imal HD95 of 9.39𝑚𝑚. This phenomenon suggests that the network pre-
+trained by MF-MCM eﬀectively exploits the available modality’s infor-
+mation. The framework remains functional across radically diﬀerent im-
+putation strategies, proving that MF-MCM distills generalizable anatom-
+ical features.
+5.3.4.  Sensitivity analysis
+To evaluate the robustness of our MF-MCM framework, we conduct 
+a sensitivity analysis on four key hyperparameters: patch size (𝑃𝑧), mask 
+unit size (𝑃𝑠), sampling interval (𝛿), and equal masking ratio (EM). As 
+shown in Table 12, the framework demonstrates strong stability across 
+Information Fusion 133 (2026) 104345 
+9 
+J. Liang et al.
+Fig. 4. The segmentation performance of MF-MCM under varying numbers of training data. The dotted line represents the model trained from scratch with 210 
+training data.
+Table 8 
+The DSC metric on downstream segmentation tasks with diﬀerent available modalities when using 3D-UNet as the 
+backbone. ∙ corresponds to the available modality, and ◦ corresponds to the absent modality. The better results 
+are in bold. "*" indicates that MF-MCM is statistically signiﬁcantly diﬀerent from the scratch (𝑝 < . 05, Wilcoxon 
+matched-pairs signed rank test).
+ Modalities  MF-MCM  Scratch
+ T1w  T1ce  T2w  FLAIR  TC  WT  ET  Average  TC  WT  ET  Average
+∙ ◦ ◦ ◦ 73.64∗ 80.14∗ 53.63∗ 69.14∗  69.92  75.64  46.63  64.03
+◦ ∙ ◦ ◦ 89.17∗ 80.06∗ 84.99∗ 84.74∗  85.16  73.13  77.46  78.55
+◦ ◦ ∙ ◦ 76.03∗ 87.71∗ 54.78∗ 72.84∗  72.97  84.88  50.13  69.16
+◦ ◦ ◦ ∙ 73.16∗  89.39 51.74∗ 71.43∗  69.86  89.28  45.97  68.37
+∙ ∙ ◦ ◦  88.93  81.85  82.95  84.57  88.62  81.97  82.99  84.53
+∙ ◦ ∙ ◦  75.45 88.54∗ 54.82∗ 72.94∗  76.16  88.10  54.40  72.89
+∙ ◦ ◦ ∙ 75.35∗ 89.25∗ 55.48∗ 73.36∗  68.18  88.42  46.90  67.84
+◦ ∙ ∙ ◦ 89.31∗ 88.96∗ 83.12∗ 87.13∗  86.03  87.07  82.81  85.30
+◦ ∙ ◦ ∙ 90.05∗ 91.53∗ 83.22∗ 88.26∗  87.77  89.99  80.24  86.00
+◦ ◦ ∙ ∙ 76.32∗ 91.45∗  55.68 74.48∗  75.08  90.73  56.22  74.01
+∙ ∙ ∙ ◦ 89.52∗ 88.86∗ 84.45∗  87.61∗  87.31  85.56  79.17  84.05
+∙ ∙ ◦ ∙  89.67∗  91.70∗  85.53  88.30∗  86.50  90.29  80.32  85.70
+∙ ◦ ∙ ∙  77.54∗  91.41∗  57.85∗  75.60∗  73.58  90.49  52.14  72.41
+◦ ∙ ∙ ∙  89.89∗  91.80  83.26∗  88.41∗  87.85  90.20  80.18  86.08
+∙ ∙ ∙ ∙  89.55∗  91.80∗  84.71∗  88.68∗  86.90  89.42  79.51  85.31
+Table 9 
+The HD95 metric on downstream segmentation tasks with diﬀerent available modalities when using 3D-UNet 
+as the backbone. ∙ corresponds to the available modality, and ◦ corresponds to the absent modality. The better 
+results are in bold. "*" indicates that MF-MCM is statistically signiﬁcantly diﬀerent from the scratch (𝑝 < . 05, 
+Wilcoxon matched-pairs signed rank test).
+ Modalities  MF-MCM  Scratch
+ T1w  T1ce  T2w  FLAIR  TC  WT  ET  Average  TC  WT  ET  Average
+∙ ◦ ◦ ◦  17.99  9.33  32.69  20.01  13.66  9.80  29.19  17.55
+◦ ∙ ◦ ◦  9.36  9.82∗  9.01∗  9.39∗  6.96  16.10  20.39  14.48
+◦ ◦ ∙ ◦  8.51∗  6.59  23.86∗  12.99∗  9.62  7.25  24.64  13.84
+◦ ◦ ◦ ∙  8.76∗  6.88∗  24.48  13.37  14.52  5.25  29.38  16.38
+∙ ∙ ◦ ◦  8.90∗  8.39  13.91  10.40∗  13.95  8.63  18.71  13.77
+∙ ◦ ∙ ◦  6.84∗  6.86  22.40∗  12.03∗  7.69  5.99  24.67  12.78
+∙ ◦ ◦ ∙  9.29∗  5.37∗  32.50∗  15.72∗  20.64  11.60  35.88  22.71
+◦ ∙ ∙ ◦  3.68∗  6.30∗  18.70∗  9.56∗  5.36  7.62  19.01  10.66
+◦ ∙ ◦ ∙  4.29∗  4.93∗  18.94∗  9.39∗  4.49  8.14  19.27  10.64
+◦ ◦ ∙ ∙  6.65∗  4.87  22.01  11.18  7.65  5.16  22.07  11.63
+∙ ∙ ∙ ◦  4.20  5.93∗  9.55  6.56∗  3.72  8.66  24.11  12.17
+∙ ∙ ◦ ∙  3.78∗  5.48∗  8.28∗  5.85∗  10.06  8.93  24.76  14.58
+∙ ◦ ∙ ∙  6.68∗  4.72∗  21.81∗  11.07∗  10.05  6.87  25.31  14.08
+◦ ∙ ∙ ∙  5.05  5.41  13.73∗  8.06  4.47  5.40  14.05  7.98
+∙ ∙ ∙ ∙  4.59  5.76  13.40∗  7.92∗  4.44  4.78  19.38  9.53
+Information Fusion 133 (2026) 104345 
+10 
+J. Liang et al.
+Table 10 
+The ASSD metric on downstream segmentation tasks with diﬀerent available modalities when using 3D-UNet 
+as the backbone. ∙ corresponds to the available modality, and ◦ corresponds to the absent modality. The better 
+results are in bold. "*" indicates that MF-MCM is statistically signiﬁcantly diﬀerent from the scratch (𝑝 < . 05, 
+Wilcoxon matched-pairs signed rank test).
+ Modalities  MF-MCM  Scratch
+ T1w  T1ce  T2w  FLAIR  TC  WT  ET  Average  TC  WT  ET  Average
+∙ ◦ ◦ ◦  13.06  2.84  28.48  14.79  8.69  3.01  24.14  11.94
+◦ ∙ ◦ ◦  6.37  3.06∗  6.30∗  5.24∗  2.69  4.75  17.13  8.19
+◦ ◦ ∙ ◦  2.63∗  1.73∗  18.46∗  7.60∗  3.51  1.92  18.96  8.13
+◦ ◦ ◦ ∙  2.95∗  1.72∗  18.96  7.88  8.43  1.36  23.99  11.26
+∙ ∙ ◦ ◦  6.36∗  2.59  11.50  6.82  11.42  2.54  16.56  10.17
+∙ ◦ ∙ ◦  2.55∗  1.63∗  18.05∗  7.41∗  2.95  1.71  19.13  7.93
+∙ ◦ ◦ ∙  4.27∗  1.50∗  28.52∗  11.43∗  14.03  6.89  29.49  16.81
+◦ ∙ ∙ ◦  1.15∗  1.56∗  16.64∗  6.45∗  2.54  2.04  16.77  7.12
+◦ ∙ ◦ ∙  1.15∗  1.10∗  16.68∗  6.31∗  1.44  1.64  16.86  6.65
+◦ ◦ ∙ ∙  2.40  1.22  17.99∗  7.20  2.59  1.31  18.11  7.34
+∙ ∙ ∙ ◦  2.45  1.46∗  6.59  3.50∗  1.18  2.17  21.95  8.43
+∙ ∙ ◦ ∙  1.15∗  1.32∗  6.17∗  2.88∗  6.88  2.02  22.17  10.36
+∙ ◦ ∙ ∙  2.40∗  1.19∗  17.97∗  7.19∗  3.26  1.60  18.78  7.88
+◦ ∙ ∙ ∙  2.30  1.29  11.52∗  5.03  1.54  1.33  11.64  4.83
+∙ ∙ ∙ ∙  1.27∗  1.25  11.30∗  4.60∗  1.41  1.25  16.90  6.52
+Table 11 
+Comparative analysis of various completion strategies for missing modalities. All experiments are conducted under the single high-
+quality modality scenario (T1ce only). The best results are in bold, and the second-best results are underlined. "∗" indicates that the zero 
+padding setting (the last row) is statistically signiﬁcantly diﬀerent from the best-performing among the other settings (𝑝 < . 05, Wilcoxon 
+matched-pairs signed rank test).
+ Filling Strategy  DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ Gaussian Noise  88.75  79.36 84.48  84.20 9.14  9.98 13.68  10.93 6.34  3.10 11.32  6.92
+ Repeated T1ce  89.49 80.34  82.97  84.26  4.88 9.40  14.07 9.45  1.85 2.89  11.50 5.41
+ Low Quality Image  87.12  84.44  82.59 84.72  9.33  6.72  13.81  9.95  6.51  2.06  11.57  6.71
+ Zero Padding 89.17  80.06∗  84.99∗  84.74  9.36∗  9.82∗  9.01∗  9.39∗  6.37∗  3.06∗  6.30∗  5.24∗
+diﬀerent conﬁgurations, particularly in terms of DSC for the TC and WT 
+regions. Variations in spatial context (𝑃𝑧) and fusion coeﬃcient sam-
+pling density (𝛿) result in minimal DSC ﬂuctuations, conﬁrming that 
+our cross-modal representation learning is inherently robust. However, 
+for the challenging ET region and boundary-sensitivity metrics, speciﬁc 
+settings yield optimal geometric accuracy. For instance, while a smaller 
+𝑃𝑧 of 96 maintains competitive DSC, the default 𝑃𝑧 = 128 provides a 
+broader spatial context that better resolves complex ET boundaries. Sim-
+ilarly, our strategy is relatively insensitive to mask unit size (𝑃𝑠) for gen-
+eral segmentation, yet 𝑃𝑠 = 16 achieves the best trade-oﬀ by minimiz-
+ing ASSD and HD95. The model also handles various fusion coeﬃcient 
+sampling interval (𝛿) consistently, with the default 𝛿 = 0.05 providing 
+suﬃcient data variance for pre-training without introducing excessive 
+task complexity. Finally, we investigate the impact of the Equal Masking 
+(EM) constraint. In our default setting, all four image channels equally 
+retain 25% of visible patches. When relaxing this to varying proportions 
+(e.g., 70% for one channel and 10% for others) while maintaining mu-
+tual exclusivity and complementarity, DSC remains largely stable, but 
+distance errors increase (e.g., ET’s HD95 rises to 18.73𝑚𝑚). This indi-
+cates that while the strict complementary condition provides a strong 
+baseline, enforcing an equal visibility ratio prevents the network from 
+taking representation shortcuts by over-relying on a single channel.
+Additionally, we evaluate the framework’s robustness against inter-
+modality registration errors by applying independent micro-spatial jit-
+ters (e.g., minor translation, rotation, and scaling) to non-T1w modali-
+ties for 50% of samples during pre-training. As shown in Table 13, such 
+spatial perturbation acts as an eﬀective data augmentation for bulk tu-
+mor regions, slightly improving TC and WT metrics and highlighting the 
+shift-invariance of our learned representations. Conversely, for the geo-
+metrically complex ET, simulated misalignment introduces pixel-level 
+ambiguity that directly disrupts our complementary masking puzzle. 
+Consequently, ﬁne-grained boundary localization degrades. These re-
+sults conﬁrm that while MF-MCM maintains strong global semantic ro-
+bustness under spatial noise, precise alignment remains essential for de-
+lineating intricate tumor boundaries.
+5.3.5.  Scalability to diverse modality scenarios
+To evaluate the ﬂexibility and generalizability of MF-MCM, we in-
+vestigate whether the framework can eﬀectively learn representations 
+when the number of input modalities is varied. Although our default 
+paradigm is optimized for four modalities, the core mechanisms of 
+modality fusion and masked complementary modeling are theoretically 
+scalable to any number (≥ 2) of inputs. To this end, we conduct exten-
+sion experiments using dual-modality and triple-modality setups. For 
+each scenario, the model is pre-trained and subsequently ﬁne-tuned on 
+the corresponding modality subsets. The results in Table 14 demonstrate 
+that MF-MCM is ﬂexible with respect to the number of available modali-
+ties and scales seamlessly across varied input conﬁgurations. We observe 
+that as the number of available modalities during pre-training increases, 
+the downstream performance improves consistently.
+Speciﬁcally, for the dual-modality conﬁguration, transitioning to 
+full-modality pre-training boosts the average DSC to 84.57% and re-
+duces the average HD95 to 10.40𝑚𝑚. A similar trend is evident in the 
+triple-modality scenario, where full-modality pre-training signiﬁcantly 
+reﬁnes ET’s boundary localization. This conﬁrms that, provided with 
+richer modality information, MF-MCM captures more comprehensive 
+cross-modal synergies and universal anatomical priors, eﬀectively bridg-
+ing the information gap for modality-constrained clinical scenarios.
+6.  Discussion and limitation
+In this study, we propose MF-MCM, an SSL framework for multi-
+modal MRI that pre-trains the model by optimizing image reconstruc-
+tion and fusion coeﬃcients regression tasks. The pre-training process 
+Information Fusion 133 (2026) 104345 
+11 
+J. Liang et al.
+Table 12 
+Sensitivity analysis of pre-training hyperparameter conﬁgurations for MFMCM. 𝑃𝑧, 𝑃𝑠, and 𝛿 denote the patch size, mask unit size (split patch 
+size), and sampling interval of the mixing coeﬃcient, respectively. EM indicates the consistency of the mask ratio across diﬀerent modalities. 
+The best results are in bold, and the second-best results are underlined. "∗" indicates the default setting (the last row) is statistically signiﬁcantly 
+diﬀerent from the best-performing among the other settings (𝑝 < . 05, Wilcoxon matched-pairs signed rank test).
+𝑃𝑧 𝑃𝑠 𝛿 EM  DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ 96  16  0.05  !  89.28  91.86  83.44  88.19  3.65  5.60  18.53  9.26  1.16  1.18  16.49  6.28
+ 128  8  0.05  !  90.10 92.15  83.16  88.47  3.75  5.22  18.94  9.31  1.07  1.18  16.61  6.29
+ 128  32  0.05  !  90.62  92.18 83.49  88.77  4.42 5.04 18.46  9.30  1.07  1.11 16.45 6.21
+ 128  16  0.01  !  90.13  92.06  83.11  88.43  3.32  5.50  18.55 9.12  1.03  1.19  16.60  6.27
+ 128  16  0.1  ! 90.36  92.05  82.88  88.43 3.65  5.15  18.70  9.17  1.03  1.19  16.57  6.26
+ 128  16  0.05  -  89.41  92.03  82.94  88.13  3.77  4.97  18.73  9.15  1.14 1.13  16.56  6.28
+ 128  16  0.05  !  89.55  91.80  84.71∗ 88.68  4.59  5.76  13.40∗  7.92∗  1.27  1.25  11.30∗  4.60∗
+Table 13 
+Sensitivity analysis for registration errors. The better results in each column are highlighted in bold. "∗" indicates statistically signiﬁcant 
+diﬀerences (𝑝 < . 05, Wilcoxon matched-pairs signed rank test) when comparing the performance of the two registration settings.
+Precise Registration  DSC (↑)  HD95 (↓)  ASSD (↓)
+ TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+ 7  90.00  91.86  83.37  88.41  3.74  5.39  18.64  9.26  1.10  1.16  16.53  6.26
+ !  89.55  91.80  84.71∗  88.68∗  4.59  5.76  13.40∗  7.92  1.27  1.25  11.30∗  4.60∗
+Table 14 
+Performance evaluation across varied modality conﬁgurations to assess framework scalability. The better results are highlighted in bold. ∙
+corresponds to the available modality, and ◦ corresponds to the absent modality. "∗" indicates statistically signiﬁcant diﬀerences (𝑝 < . 05, 
+Wilcoxon matched-pairs signed rank test) when comparing the performance of the full-modality setting against the reduced modality setting.
+Pre-training Setup Downstream Setup  DSC (↑)  HD95 (↓)  ASSD (↓)
+ T1  T1ce  T2  FLAIR  T1  T1ce  T2  FLAIR  TC  WT  ET  Average  TC  WT  ET  Average  TC  WT  ET  Average
+∙ ∙ ◦ ◦ ∙ ∙ ◦ ◦  86.78  79.40  79.90  82.03  15.21  9.22  29.06  17.83  12.65  2.99  27.08  14.24
+∙ ∙ ∙ ∙ ∙ ∙ ◦ ◦  88.93∗  81.85∗  82.95∗  84.57∗  8.90∗  8.39∗  13.91∗  10.40∗  6.36∗  2.59∗  11.50∗  6.82∗
+∙ ∙ ∙ ◦ ∙ ∙ ∙ ◦  89.20  89.14  82.75  87.03  3.78  5.52  18.66  9.32  1.17  1.49  16.58  6.41
+∙ ∙ ∙ ∙ ∙ ∙ ∙ ◦  89.52  88.86  84.45∗  87.61∗  4.20∗  5.93  9.55∗  6.56∗  2.45∗  1.46  6.59∗  3.50∗
+Fig. 5. Convergence analysis and visualization of the MF-MCM pre-training process. (A-C) Training loss curves for the reconstruction loss (𝑟𝑒𝑐 ), fusion coeﬃcients 
+regression loss (𝑟𝑒𝑔), and total loss (). (D-I) Qualitative results showing original T1ce/FLAIR images, their fused and masked inputs, and the ﬁnal reconstructed 
+outputs. The red boxes highlight critical tumor boundary regions.
+Information Fusion 133 (2026) 104345 
+12 
+J. Liang et al.
+of MF-MCM exhibits highly stable optimization behavior. As illustrated 
+in Fig. 5, both the reconstruction loss and the fusion coeﬃcients re-
+gression loss decrease smoothly, converging steadily around epoch 500 
+without noticeable oscillation. Compared to standard MIM, the addi-
+tional modality fusion operation introduces only modest computational 
+overhead, while maintaining highly eﬃcient convergence speed. A crit-
+ical challenge in multimodal pre-training is preserving ﬁne anatomical 
+structures, particularly under heavy masking or Mix-Up operations. In 
+our framework, as shown in Fig. 5, the structural integrity in the visi-
+ble regions is maintained because the fusion process is asymmetric; for 
+each mixed input, one speciﬁc modality acts as the "dominant" modal-
+ity, ensuring the primary anatomical topology is preserved rather than 
+blurred. Additionally, the complementary masking strategy guarantees 
+that every spatial region is visible in at least one modality. As shown 
+in Fig. 5, even in regions with severe disease where tumor textures are 
+highly heterogeneous, the critical boundary information is successfully 
+reconstructed.
+To prevent the model from learning trivial or shortcut solutions dur-
+ing the fusion coeﬃcients regression task, we speciﬁcally restrict the 
+regression loss calculation to the visible patches only. If the regression 
+were computed globally, the network could exploit a statistical shortcut 
+by predominantly predicting zeros for the 75% masked regions, lead-
+ing to severe mode collapse and failing to capture true modality con-
+tributions. Predicting fusion coeﬃcients in visible regions also proves 
+beneﬁcial for small or rare tumor regions, as the local patch-level re-
+gression forces the model to heavily weigh localized pathological fea-
+tures rather than relying on global background heuristics. To mitigate 
+the risk of overﬁtting during extensive pre-training on limited datasets, 
+our modality fusion strategy intrinsically provides massive, highly gran-
+ular data augmentation. Mathematically, instead of learning from a dis-
+crete set of four standalone modalities, the fusion process in Eq. 1 maps 
+the inputs into a highly dense combinatorial space. Although the fusion 
+coeﬃcients 𝛿 are sampled from a discrete set with a step size of 0.05, 
+this granular distribution provides a rich spectrum of blended intensi-
+ties. More importantly, because distinct fusion coeﬃcients are applied 
+independently across diﬀerent patches within the same volume, the net-
+work encounters an exponentially large variety of modality-mixed vol-
+umetric patterns. This extreme spatial data diversity prevents the net-
+work from relying on global intensity statistics and eﬀectively regu-
+larizes the network over long pre-training schedules, yielding satisfac-
+tory downstream performance with fewer than 1000 pre-training cases. 
+Furthermore, this paradigm can be naturally extended to consistency-
+based semi-supervised frameworks such as Mean Teacher [46]. By ap-
+plying diﬀerent fusion coeﬃcients to the same data to generate multiple 
+"modality views", the model is encouraged to produce consistent predic-
+tions, thereby signiﬁcantly enhancing the reliability of pseudo-labels.
+Despite the observed improvements, certain failure cases persist. Ex-
+tremely small lesions remain challenging for all evaluated methods, in-
+cluding MF-MCM, particularly when certain sub-regions (e.g., the ET 
+region) are absent in a minority of training samples, which may lead to 
+occasional false positives. Nevertheless, our method demonstrates su-
+perior detection capabilities on datasets characterized by small lesions, 
+such as MET and ATLAS2, outperforming existing SOTA methods. For 
+segmentation tasks with such characteristics, the learned encoder can 
+be transferred to segmentation architectures speciﬁcally optimized for 
+small target detection.
+Despite the promising results, our study has two primary limita-
+tions. First, our complementary modeling requires anatomical align-
+ment across modalities, which is typically achievable using standard 
+registration software like ANTs [47]. We have also analyzed the sce-
+nario of pre-training with inaccurately registered datasets. As shown 
+in Table 13, MF-MCM exhibits a certain degree of robustness against 
+registration inaccuracies. Second, our current pre-training relies on the 
+BraTS glioma dataset, potentially limiting diversity and introducing do-
+main bias. This bias often manifests as performance instability during 
+task transfer. Speciﬁcally, while several SOTA SSL methods suﬀer from 
+performance decay and fall behind scratch counterparts in other brain 
+tumor tasks beyond glioma, our approach demonstrates superior adapt-
+ability. By maintaining high performance across various pathological 
+conditions, MF-MCM proves more resilient to the challenges of cross-
+domain deployment than existing SSL paradigms. As neuroimaging shar-
+ing platforms like the BraTS series continue to grow, our framework can 
+be incrementally updated with more heterogeneous data. Experiments 
+with reduced modality subsets in Table 14 further suggest that the model 
+maintains adaptability under varying acquisition conditions, supporting 
+its potential for generalizability. Training on a broader spectrum of neu-
+rological conditions and diverse scanner protocols will likely enhance 
+the robustness of our strategy. Furthermore, the modality fusion mech-
+anism itself serves as an implicit domain generalization tool. By generat-
+ing a nearly continuous spectrum of "unseen" modality contrasts during 
+pre-training, the model learns to be more invariant to intensity shifts 
+caused by diﬀerent scanners or imaging protocols, thereby improving 
+its clinical utility in varied research settings.
+While our experiments primarily focus on multimodal brain MRI, 
+the proposed MF-MCM framework is not inherently restricted to this 
+domain. Provided that spatial co-registration is feasible, the complemen-
+tary masking and modality fusion mechanisms can be readily extended 
+to other multimodal medical imaging tasks, such as PET-MRI or CT-
+MRI. Regarding computational cost and practical trade-oﬀs, MF-MCM is 
+highly eﬃcient and architecture-agnostic. The modality fusion and com-
+plementary masking operations introduce only modest computational 
+overhead compared to standard MIM pipelines. To demonstrate its ar-
+chitectural ﬂexibility, we evaluate MF-MCM on backbones with vastly 
+diﬀerent parameter scales: a lightweight CNN (3D-UNet, ∼18.92M pa-
+rameters) and a heavier Transformer (Swin UNETR, ∼62.19M parame-
+ters). MF-MCM consistently achieves SOTA performance across both ar-
+chitectures, proving that it does not rely on massive model capacities to 
+succeed. Most importantly, these robust, generalizable representations 
+are acquired using fewer than 1000 unannotated pre-training cases. This 
+exceptional data eﬃciency enables researchers and clinicians to make 
+ﬂexible trade-oﬀs between computational cost and model capacity dur-
+ing practical deployment.
+We speciﬁcally choose MIM as our primary baseline, as it has 
+been widely recognized and validated for its eﬀectiveness in learn-
+ing ﬁne-grained structural representations from unannotated medical 
+data. Furthermore, our comparisons include recent SOTA approaches 
+like BrainMVP [19], which is built upon the MIM paradigm but in-
+troduces modality-speciﬁc templates and modality-aware contrastive 
+learning. Moving forward, MF-MCM could be further enhanced by incor-
+porating advanced strategies from these recent works; for instance, the 
+anatomical-consistency-driven contrastive learning employed in Brain-
+MVP could be integrated as an auxiliary objective to further strengthen 
+MF-MCM’s global cross-modality alignment and feature discriminative-
+ness.
+7.  Conclusion
+In this paper, we introduce a novel SSL method for multimodal brain 
+MRI, named MF-MCM. Two innovative strategies, Modality Fusion and 
+Masked Complementary Modeling, are designed to capture cross-modal 
+interaction information and enable eﬀective integration of complemen-
+tary information across modalities. We validate the eﬀectiveness of MF-
+MCM in four brain tumor segmentation tasks and a brain lesion segmen-
+tation task. MF-MCM consistently outperforms representative SSL meth-
+ods. Ablation studies emphasize the importance of the main components 
+and demonstrate the robustness of MF-MCM to insuﬃcient training data 
+and incomplete modalities. Future work will focus on extending MF-
+MCM to a broader range of multimodal medical images and exploring 
+additional strategies to further enhance the model’s robustness. Further-
+more, the MF-MCM framework oﬀers seamless architectural scalability 
+regarding the number of input modalities.
+Information Fusion 133 (2026) 104345 
+13 
+J. Liang et al.
+Data availability
+Codes and pre-trained models will be available at 
+https://github.com/liangjianwen01/MF-MCM.
+CRediT authorship contribution statement
+Jianwen Liang: Writing – review & editing, Writing – original draft, 
+Methodology, Investigation, Formal analysis, Data curation, Concep-
+tualization; Li Lin: Writing – review & editing, Validation, Supervi-
+sion, Project administration, Methodology, Investigation, Formal anal-
+ysis, Data curation, Conceptualization; Junyan Lyu: Writing – review 
+& editing, Supervision, Methodology; Pujin Cheng: Writing – review & 
+editing, Supervision; Xiaoying Tang: Writing – review & editing, Su-
+pervision, Resources, Project administration, Methodology, Funding ac-
+quisition, Formal analysis, Data curation.
+Declaration of competing interest
+The authors declare that they have no known competing ﬁnancial 
+interests or personal relationships that could have appeared to inﬂuence 
+the work reported in this paper. 
+Acknowledgment
+This study was supported by the National Key Research and De-
+velopment Program of China (2023YFC2415400); the National Natu-
+ral Science Foundation of China (T2422012); the Guangdong Basic and 
+Applied Basic Research (2024B1515020088); the High Level of Special 
+Funds (G030230001, G03034K003); the Guangdong Key Research and 
+Development Program (2025B1111080001); the SUSTech Fang Keng 
+Faculty Award. 
+References
+[1] P. Kickingereder, F. Isensee, I. Tursunova, J. Petersen, U. Neuberger, D. Bonekamp, 
+G. Brugnara, M. Schell, T. Kessler, M. Foltyn,  et al, Automated quantitative tu-
+mour response assessment of mri in neuro-oncology with artiﬁcial neural networks: 
+a multicentre, retrospective study, The Lancet Oncol. 20 (5) (2019) 728–740.
+[2] B.H. Menze, A. Jakab, S. Bauer, J. Kalpathy-Cramer, K. Farahani, J. Kirby, Y. Burren, 
+N. Porz, J. Slotboom, R. Wiest,  et al, The multimodal brain tumor image segmen-
+tation benchmark (brats), IEEE Trans. Med. Imaging 34 (10) (2014) 1993–2024.
+[3] H. Song, M. Kim, D. Park, Y. Shin, J.-G. Lee, Learning from noisy labels with deep 
+neural networks: a survey, IEEE Trans. Neural Netw. Learn Syst. 34 (11) (2022) 
+8135–8153.
+[4] Y. Huang, J. Lyu, P. Cheng, R. Tam, X. Tang,  Ssit, Saliency-guided self-supervised 
+image transformer for diabetic retinopathy grading, 2024.
+[5] C. Doersch, A. Gupta, A.A. Efros, Unsupervised visual representation learning by 
+context prediction, 2015.
+[6] K. He, H. Fan, Y. Wu, S. Xie, R. Girshick, Momentum contrast for unsupervised visual 
+representation learning, in: Proceedings of the IEEE/CVF Conference on Computer 
+Vision and Pattern Recognition, the IEEE/CVF conference on computer vision and 
+pattern recognition, 2020, pp. 9729–9738.
+[7] F. Haghighi, M.R.H. Taher, M.B. Gotway, J. Liang, Dira: discriminative, restora-
+tive, and adversarial learning for self-supervised medical image analysis, in: Pro-
+ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2022, pp. 
+20824–20834.
+[8] Y. Tang, D. Yang, W. Li, H.R. Roth, B. Landman, D. Xu, V. Nath, A. Hatamizadeh, 
+Self-supervised pre-training of swin transformers for 3d medical image analysis, in: 
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recogni-
+tion, the IEEE/CVF conference on computer vision and pattern recognition, 2022, 
+pp. 20730–20740.
+[9] Y. He, G. Yang, R. Ge, Y. Chen, J.-L. Coatrieux, B. Wang, S. Li, Geometric visual 
+similarity learning in 3d medical image self-supervised pre-training, in: Proceed-
+ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2023, pp. 
+9538–9547.
+[10] D. Pathak, P. Krahenbuhl, J. Donahue, T. Darrell, A.A. Efros, Context encoders: Fea-
+ture learning by inpainting, 2016.
+[11] Z. Chen, D. Agarwal, K. Aggarwal, W. Safta, M.M. Balan, K. Brown, Masked im-
+age modeling advances 3d medical image analysis, in: Proceedings of the IEEE/CVF 
+Winter Conference on Applications of Computer Vision, the IEEE/CVF Winter Con-
+ference on Applications of Computer Vision, 2023, pp. 1970–1980.
+[12] Z. Xie, Z. Zhang, Y. Cao, Y. Lin, J. Bao, Z. Yao, Q. Dai, H. Hu, Simmim: a simple 
+framework for masked image modeling, in: Proceedings of the IEEE/CVF Conference 
+on Computer Vision and Pattern Recognition, the IEEE/CVF conference on computer 
+vision and pattern recognition, 2022, pp. 9653–9663.
+[13] T. Salimans, I. Goodfellow, W. Zaremba, V. Cheung, A. Radford, X. Chen, Improved 
+techniques for training gans, Adv. Neural Inf. Process. Syst. 29 (2016).
+[14] Q. Yang, X. Guo, Z. Chen, P.Y. Woo, Y. Yuan, D 2-net: dual disentanglement network 
+for brain tumor segmentation with missing modalities, IEEE Trans. Med. Imaging 41 
+(10) (2022) 2953–2964.
+[15] E.-S. Kim, W.Y. Kang, K.-W. On, Y.-J. Heo, B.-T. Zhang, Hypergraph attention net-
+works for multimodal learning, in: Proceedings of the IEEE/CVF Conference on Com-
+puter Vision and Pattern Recognition, the IEEE/CVF conference on computer vision 
+and pattern recognition, 2020, pp. 14581–14590.
+[16] C. Chen, Q. Dou, Y. Jin, H. Chen, J. Qin, P.-A. Heng, Robust multimodal brain tu-
+mor segmentation via feature disentanglement and gated fusion, in: Medical Image 
+Computing and Computer Assisted Intervention-MICCAI 2019: 22nd International 
+Conference, Shenzhen, China, Springer, 2019, pp. 447–456. Proceedings, Part III 22.
+[17] H. Yang, T. Zhou, Y. Zhou, Y. Zhang, H. Fu, Flexible fusion network for multi-
+modal brain tumor segmentation, IEEE J. Biomed. Health Inform. 27 (7) (2023) 
+3349–3359.
+[18] H. Liu, D. Wei, D. Lu, J. Sun, L. Wang, Y. Zheng, M3ae: Multimodal representation 
+learning for brain tumor segmentation with missing modalities, Proc. AAAI Conf. 
+Artif. Intell. 37 (2023) 1657–1665.
+[19] S. Rui, L. Chen, Z. Tang, L. Wang, M. Liu, S. Zhang, X. Wang, Multi-modal vision 
+pre-training for medical image analysis, in: Proceedings of the Computer Vision and 
+Pattern Recognition Conference, the Computer Vision and Pattern Recognition Con-
+ference, 2025, pp. 5164–5174.
+[20] U. Baid, S. Ghodasara, S. Mohan, M. Bilello, E. Calabrese, E. Colak, K. Farahani, 
+J. Kalpathy-Cramer, F.C. Kitamura, S. Pati,  et al, The rsna-asnr-miccai brats 2021 
+benchmark on brain tumor segmentation and radiogenomic classiﬁcation, Technical 
+Report, arXiv preprint, 2021.
+[21] M. Adewole, J.D. Rudie, A. Gbdamosi, O. Toyobo, C. Raymond, D. Zhang, O. Omidiji, 
+R. Akinola, M.A. Suwaid, A. Emegoakor,  et al, The brain tumor segmentation 
+(brats) challenge 2023: glioma segmentation in sub-saharan africa patient popu-
+lation (brats-africa), ArXiv, 2023.
+[22] A.F. Kazerooni, N. Khalili, X. Liu, D. Haldar, Z. Jiang, S.M. Anwar, J. Albrecht, M. 
+Adewole, U. Anazodo, H. Anderson,  et al, The brain tumor segmentation (brats) 
+challenge, Technical Report, arXiv preprint, 2023.
+[23] A.W. Moawad, A. Janas, U. Baid, D. Ramakrishnan, L. Jekel, K. Krantchev, H. Moy, 
+R. Saluja, K. Osenberg, K. Wilms,  et al, The brain tumor segmentation (brats-mets) 
+challenge 2023: Brain metastasis segmentation on pre-treatment mri, Technical Re-
+port, arXiv preprint, 2023.
+[24] S.-L. Liew, B.P. Lo, M.R. Donnelly, A. Zavaliangos-Petropulu, J.N. Jeong, G. 
+Barisano, A. Hutton, J.P. Simon, J.M. Juliano, A. Suri,  et al, A large, curated, open-
+source stroke neuroimaging dataset to improve lesion segmentation algorithms, Sci. 
+Data 9 (1) (2022) 320.
+[25] J. Liang, L. Lin, J. Lyu, X. Tang, Masked modality complementary modeling for brain 
+tumor segmentation, in: 2024 IEEE International Conference on Bioinformatics and 
+Biomedicine (BIBM), IEEE, 2024, pp. 3475–3480.
+[26] J.-B. Grill, F. Strub, F. Altché, C. Tallec, P. Richemond, E. Buchatskaya, C. Doersch, 
+B.A. Pires, Z. Guo, M.G. Azar,  et al, Bootstrap your own latent-a new approach to 
+self-supervised learning, Adv. Neural Inf. Process Syst. 33 (2020) 21271–21284.
+[27] X. Chen, K. He, Exploring simple siamese representation learning, in: Proceed-
+ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, 
+the IEEE/CVF conference on computer vision and pattern recognition, 2021, pp. 
+15750–15758.
+[28] H. Bao, L. Dong, S. Piao, F. Wei, Beit: Bert pre-training of image transformers, Tech-
+nical Report, arXiv preprint, 2021.
+[29] J. Devlin, Bert: Pre-training of deep bidirectional transformers for language under-
+standing, Technical Report, arXiv preprint, 2018.
+[30] J.T. Rolfe, Discrete variational autoencoders, Technical Report, arXiv preprint, 
+2016.
+[31] K. Tian, Y. Jiang, Q. Diao, C. Lin, L. Wang, Z. Yuan, Designing bert for convolu-
+tional networks: Sparse and hierarchical masked modeling, Technical Report, arXiv 
+preprint, 2023.
+[32] S. Thulasidasan, G. Chennupati, J.A. Bilmes, T. Bhattacharya, S. Michalak, On mixup 
+training: improved calibration and predictive uncertainty for deep neural networks, 
+Adv. Neural Inf. Process. Syst. 32 (2019).
+[33] J. Liu, X. Huang, J. Zheng, Y. Liu, H. Li, Mixmae: mixed and masked autoencoder 
+for eﬃcient pretraining of hierarchical vision transformers, in: Proceedings of the 
+IEEE/CVF Conference on Computer Vision and Pattern Recognition, the IEEE/CVF 
+Conference on Computer Vision and Pattern Recognition, 2023, pp. 6252–6261.
+[34] K. Chen, Z. Liu, L. Hong, H. Xu, Z. Li, D.-Y. Yeung, Mixed autoencoder for self-
+supervised visual representation learning, in: Proceedings of the IEEE/CVF Confer-
+ence on Computer Vision and Pattern Recognition, the IEEE/CVF conference on 
+computer vision and pattern recognition, 2023, pp. 22742–22751.
+[35] Z. Zhou, V. Sodha, J. Pang, M.B. Gotway, J. Liang, Models genesis, Med. Image Anal. 
+67 (2021) 101840.
+[36] X. Tao, Y. Li, W. Zhou, K. Ma, Y. Zheng, Revisiting rubik’s cube: self-supervised 
+learning with volume-wise transformation for 3d medical image segmentation, in: 
+Medical Image Computing and Computer Assisted Intervention-MICCAI 2020: 23rd 
+International Conference, Lima, Peru, Springer, 2020, pp. 238–248. Proceedings, 
+Part IV 23.
+[37] J. Huang, H. Li, G. Li, X. Wan, Attentive symmetric autoencoder for brain mri 
+segmentation, in: International Conference on Medical Image Computing and 
+Computer-Assisted Intervention, Springer, 2022, pp. 203–213.
+Information Fusion 133 (2026) 104345 
+14 
+J. Liang et al.
+[38] F. Haghighi, M.R.H. Taher, Z. Zhou, M.B. Gotway, J. Liang, Transferable visual 
+words: exploiting the semantics of anatomical patterns for self-supervised learning, 
+IEEE Trans. Med. Imaging 40 (10) (2021) 2857–2868.
+[39] Y. Wang, Z. Li, J. Mei, Z. Wei, L. Liu, C. Wang, S. Sang, A.L. Yuille, C. Xie, Y. Zhou, 
+Swinmm: masked multi-view with swin transformers for 3d medical image segmen-
+tation, in: International Conference on Medical Image Computing and Computer-
+Assisted Intervention, Springer, 2023, pp. 486–496.
+[40] H.-Y. Zhou, C. Lu, C. Chen, S. Yang, Y. Yu, A uniﬁed visual information preservation 
+framework for self-supervised pre-training in medical image analysis, IEEE Trans. 
+Pattern Anal. Mach. Intell. 45 (7) (2023) 8020–8035.
+[41] A. Hatamizadeh, V. Nath, Y. Tang, D. Yang, H.R. Roth, D. Xu, Swin unetr: swin trans-
+formers for semantic segmentation of brain tumors in mri images, in: International 
+MICCAI Brainlesion Workshop, Springer, 2021, pp. 272–284.
+[42] G. Wang, J. Wu, X. Luo, X. Liu, K. Li, S. Zhang, Mis-fm: 3d medical image segmen-
+tation using foundation models pretrained on a large-scale unannotated dataset, 
+Technical Report, arXiv preprint, 2023.
+[43] R. Bachmann, D. Mizrahi, A. Atanov, A. Zamir, Multimae: multi-modal multi-task 
+masked autoencoders, in: European Conference on Computer Vision, Springer, 2022, 
+pp. 348–367.
+[44] A. Taleb, C. Lippert, T. Klein, M. Nabi, Multimodal self-supervised 
+learning for medical image analysis, in: International Conference 
+on Information Processing in Medical Imaging, Springer, 2021,
+pp. 661–673.
+[45] O. Çiçek, A. Abdulkadir, S.S. Lienkamp, T. Brox, O. Ronneberger, 3D u-
+net: learning dense volumetric segmentation from sparse annotation, in: Med-
+ical Image Computing and Computer-Assisted Intervention-MICCAI 2016: 19th 
+International Conference, Athens, Greece, Springer, 2016, pp. 424–432. 
+Proceedings, Part II 19.
+[46] A. Tarvainen, H. Valpola, Mean teachers are better role models: weight-averaged 
+consistency targets improve semi-supervised deep learning results, Adv. Neural Inf. 
+Process. Syst. 30 (2017).
+[47] B.B. Avants, N. Tustison, G. Song,  et al, Advanced normalization tools (ants), 2009.
+Information Fusion 133 (2026) 104345 
+15 
